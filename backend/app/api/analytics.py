@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import get_current_user, get_current_admin
 from app.core.config import UPLOAD_DIR
+from app.core.audit import log_action
 from app.models.user import User
 from app.models.analytics import SalesReport, SalesRecord
 from app.schemas.analytics import (
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 async def process_sales_report_background(report_id: int, file_path: str):
     from app.core.database import async_session
+    from datetime import datetime, timezone
 
     async with async_session() as db:
         try:
@@ -43,25 +45,29 @@ async def process_sales_report_background(report_id: int, file_path: str):
             for record in records:
                 sales_record = SalesRecord(
                     report_id=report_id,
-                    manager_name=record.get("manager_name"),
-                    client_name=record.get("client_name"),
-                    product_name=record.get("product_name"),
+                    level=record.get("level", "product"),
+                    name=record.get("name", ""),
                     quantity=record.get("quantity"),
                     tonnage=record.get("tonnage"),
                     revenue=record.get("revenue"),
-                    profit=record.get("profit"),
+                    gross_profit=record.get("gross_profit") or record.get("profit"),
                     margin_pct=record.get("margin_pct"),
-                    record_level=record.get("record_level", "product"),
                 )
                 db.add(sales_record)
 
-            report.period_start = metadata.get("period", "").split(" - ")[0] if " - " in metadata.get("period", "") else metadata.get("period")
-            report.period_end = metadata.get("period", "").split(" - ")[1] if " - " in metadata.get("period", "") else None
+            period = metadata.get("period", "")
+            if " - " in period:
+                parts = period.split(" - ")
+                report.period_start = parts[0]
+                report.period_end = parts[1]
+            else:
+                report.period_start = period
             report.total_revenue = metadata.get("total_revenue")
             report.total_profit = metadata.get("total_profit")
             report.total_clients = metadata.get("total_clients")
             report.total_skus = metadata.get("total_skus")
-            report.status = "ready"
+            report.status = "processed"
+            report.processed_at = datetime.now(timezone.utc)
 
             summary_parts = []
             if metadata.get("period"):
@@ -72,10 +78,6 @@ async def process_sales_report_background(report_id: int, file_path: str):
                 summary_parts.append(f"Прибыль: {metadata['total_profit']:,.0f} руб.")
             if metadata.get("total_managers"):
                 summary_parts.append(f"Менеджеров: {metadata['total_managers']}")
-            if metadata.get("total_clients"):
-                summary_parts.append(f"Клиентов: {metadata['total_clients']}")
-            if metadata.get("total_skus"):
-                summary_parts.append(f"SKU: {metadata['total_skus']}")
             report.summary = "; ".join(summary_parts)
 
             await db.commit()
@@ -84,7 +86,7 @@ async def process_sales_report_background(report_id: int, file_path: str):
             report = result.scalar_one_or_none()
             if report:
                 report.status = "error"
-                report.summary = f"Error: {str(e)}"
+                report.summary = f"Ошибка: {str(e)}"
             await db.commit()
 
 
@@ -100,26 +102,30 @@ async def upload_sales_report(
     if ext not in {".xlsx", ".xls", ".csv"}:
         raise HTTPException(status_code=400, detail="Only .xlsx, .xls, .csv files supported")
 
+    content = await file.read()
     unique_name = f"{uuid.uuid4()}{ext}"
     file_path = str(UPLOAD_DIR / "reports" / unique_name)
-
-    content = await file.read()
     with open(file_path, "wb") as f:
         f.write(content)
 
     report = SalesReport(
+        uploaded_by=current_user.id,
         filename=unique_name,
         original_filename=file.filename,
+        file_path=file_path,
         report_type=report_type,
-        uploaded_by=current_user.id,
         status="processing",
     )
     db.add(report)
     await db.flush()
     await db.refresh(report)
 
-    background_tasks.add_task(process_sales_report_background, report.id, file_path)
+    await log_action(
+        db, "upload_report", user_id=current_user.id,
+        entity_type="sales_report", entity_id=report.id,
+    )
 
+    background_tasks.add_task(process_sales_report_background, report.id, file_path)
     return SalesReportResponse.model_validate(report)
 
 
@@ -129,8 +135,7 @@ async def list_reports(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(SalesReport).order_by(SalesReport.created_at.desc()))
-    reports = result.scalars().all()
-    return [SalesReportResponse.model_validate(r) for r in reports]
+    return [SalesReportResponse.model_validate(r) for r in result.scalars().all()]
 
 
 @router.get("/reports/{report_id}", response_model=SalesReportResponse)
@@ -146,6 +151,28 @@ async def get_report(
     return SalesReportResponse.model_validate(report)
 
 
+@router.delete("/reports/{report_id}")
+async def delete_report(
+    report_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SalesReport).where(SalesReport.id == report_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if os.path.exists(report.file_path):
+        os.remove(report.file_path)
+
+    await db.delete(report)
+    await log_action(
+        db, "delete_report", user_id=current_user.id,
+        entity_type="sales_report", entity_id=report_id,
+    )
+    return {"status": "deleted"}
+
+
 @router.get("/reports/{report_id}/analytics")
 async def get_report_analytics(
     report_id: int,
@@ -156,11 +183,9 @@ async def get_report_analytics(
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "ready":
+    if report.status != "processed":
         raise HTTPException(status_code=400, detail="Report is still processing")
-
-    analytics = await get_sales_analytics(db, report_id)
-    return analytics
+    return await get_sales_analytics(db, report_id)
 
 
 @router.get("/reports/{report_id}/managers")
@@ -169,8 +194,7 @@ async def get_report_managers(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    analysis = await get_manager_analysis(db, report_id)
-    return analysis
+    return await get_manager_analysis(db, report_id)
 
 
 @router.get("/reports/{report_id}/clients")
@@ -179,8 +203,7 @@ async def get_report_clients(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    analysis = await get_client_analysis(db, report_id)
-    return analysis
+    return await get_client_analysis(db, report_id)
 
 
 @router.get("/reports/{report_id}/recommendations")

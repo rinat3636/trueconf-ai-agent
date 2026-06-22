@@ -1,79 +1,114 @@
-import uuid
-from typing import List, Optional, Tuple
+import time
+from typing import List, Optional, Dict, Any
 
-from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.config import settings
+from app.core.llm import chat_completion
 from app.models.knowledge import CorporateRule, AnswerCorrection
-from app.services.knowledge_service import search_knowledge
-
-client = AsyncOpenAI(
-    api_key=settings.AITUNNEL_API_KEY,
-    base_url=settings.AITUNNEL_BASE_URL,
-)
+from app.services.knowledge_service import search_knowledge, search_corrections
 
 
-async def get_corporate_rules(db: AsyncSession) -> List[str]:
+async def get_corporate_rules(db: AsyncSession) -> List[Dict[str, Any]]:
     result = await db.execute(
         select(CorporateRule).where(CorporateRule.is_active == True)
+        .order_by(CorporateRule.priority.desc())
     )
     rules = result.scalars().all()
-    return [f"[{r.rule_type}] {r.title}: {r.content}" for r in rules]
+    return [
+        {
+            "id": r.id,
+            "title": r.title,
+            "content": r.content,
+            "rule_type": r.rule_type,
+            "priority": r.priority,
+        }
+        for r in rules
+    ]
 
 
-async def find_correction(db: AsyncSession, question: str) -> Optional[str]:
+async def find_exact_correction(db: AsyncSession, question: str) -> Optional[str]:
     result = await db.execute(
         select(AnswerCorrection).where(AnswerCorrection.is_active == True)
     )
     corrections = result.scalars().all()
 
-    question_lower = question.lower()
+    question_lower = question.lower().strip()
     for correction in corrections:
-        if correction.original_question.lower() in question_lower or question_lower in correction.original_question.lower():
+        if correction.original_question.lower().strip() == question_lower:
             return correction.corrected_answer
 
     return None
 
 
-async def generate_answer(
-    question: str,
-    db: AsyncSession,
-    session_id: Optional[str] = None,
-) -> Tuple[str, List[str], str]:
-    if not session_id:
-        session_id = str(uuid.uuid4())
+async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
+    start_time = time.time()
+    trace = {"steps": [], "sources": [], "rules": []}
 
-    correction = await find_correction(db, question)
-    if correction:
-        return correction, ["correction"], session_id
+    exact_correction = await find_exact_correction(db, question)
+    if exact_correction:
+        elapsed = int((time.time() - start_time) * 1000)
+        return {
+            "answer": exact_correction,
+            "sources": [],
+            "rules_applied": [],
+            "confidence": 1.0,
+            "response_time_ms": elapsed,
+            "trace": {"method": "exact_correction"},
+        }
+    trace["steps"].append("no_exact_correction")
 
-    context_items = await search_knowledge(question, n_results=5)
-    rules = await get_corporate_rules(db)
+    vector_correction = await search_corrections(question, score_threshold=0.90)
+    if vector_correction:
+        elapsed = int((time.time() - start_time) * 1000)
+        return {
+            "answer": vector_correction.get("answer", ""),
+            "sources": [],
+            "rules_applied": [],
+            "confidence": 0.95,
+            "response_time_ms": elapsed,
+            "trace": {"method": "vector_correction", "score": vector_correction.get("score")},
+        }
+    trace["steps"].append("no_vector_correction")
+
+    rules_data = await get_corporate_rules(db)
+    trace["rules"] = [{"id": r["id"], "title": r["title"]} for r in rules_data]
+
+    context_items = await search_knowledge(question, n_results=10)
+    trace["sources"] = [
+        {
+            "content_preview": item["content"][:100],
+            "score": item["score"],
+            "metadata": {k: v for k, v in item["metadata"].items() if k != "content"},
+        }
+        for item in context_items
+    ]
 
     context_text = ""
     sources = []
     for item in context_items:
-        if item["relevance"] > 0.3:
-            context_text += f"\n---\n{item['content']}\n"
-            source = item["metadata"].get("source", "base")
-            if source not in sources:
-                sources.append(source)
+        context_text += f"\n---\n{item['content']}\n"
+        meta = item["metadata"]
+        sources.append({
+            "document_id": meta.get("document_id"),
+            "document_title": meta.get("source", "База знаний"),
+            "relevance_score": round(item["score"], 3),
+            "chunk_preview": item["content"][:200],
+        })
 
     system_prompt = (
-        "Ты - корпоративный ИИ-ассистент компании. "
+        "Ты - корпоративный ИИ-ассистент компании ТД \"Мир Мороженого\". "
         "Ты отвечаешь ТОЛЬКО на основании предоставленной базы знаний. "
-        "Если информация отсутствует в базе знаний, ответь: "
+        "Если информации нет в базе знаний, ответь: "
         '"Информация отсутствует в базе знаний."\n'
         "Отвечай на русском языке. Будь точен и конкретен.\n"
         "Указывай источник информации, если он известен.\n"
     )
 
-    if rules:
-        system_prompt += "\nКорпоративные правила:\n"
-        for rule in rules:
-            system_prompt += f"- {rule}\n"
+    if rules_data:
+        system_prompt += "\nКорпоративные правила (обязательны к применению):\n"
+        for r in rules_data:
+            system_prompt += f"- [{r['rule_type']}] {r['title']}: {r['content']}\n"
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -83,50 +118,33 @@ async def generate_answer(
             "content": f"Контекст из базы знаний:\n{context_text}\n\nВопрос: {question}",
         })
     else:
-        messages.append({
-            "role": "user",
-            "content": question,
-        })
+        messages.append({"role": "user", "content": question})
 
-    response = await client.chat.completions.create(
-        model=settings.LLM_CHAT_MODEL,
-        messages=messages,
-        max_tokens=2000,
-        temperature=0.3,
-    )
+    answer = await chat_completion(messages=messages, max_tokens=2000, temperature=0.1)
 
-    answer = response.choices[0].message.content
-    return answer, sources, session_id
+    confidence = 0.0
+    if context_items:
+        confidence = max(item["score"] for item in context_items)
+    if not context_items:
+        confidence = 0.1
 
+    elapsed = int((time.time() - start_time) * 1000)
 
-async def analyze_document_with_ai(text: str) -> dict:
-    if len(text) > 12000:
-        text = text[:12000]
-
-    response = await client.chat.completions.create(
-        model=settings.LLM_ANALYSIS_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Ты - ИИ-аналитик. Проанализируй документ и верни:\n"
-                    "1. Краткое содержание\n"
-                    "2. Основные выводы\n"
-                    "3. Риски\n"
-                    "4. Рекомендации\n"
-                    "5. Проблемные зоны\n"
-                    "Отвечай на русском языке. Будь конкретен."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Проанализируй этот документ:\n\n{text}",
-            },
-        ],
-        max_tokens=3000,
-        temperature=0.3,
-    )
+    rules_applied = [
+        {
+            "rule_id": r["id"],
+            "title": r["title"],
+            "rule_type": r["rule_type"],
+            "priority": r["priority"],
+        }
+        for r in rules_data
+    ]
 
     return {
-        "analysis": response.choices[0].message.content,
+        "answer": answer,
+        "sources": sources,
+        "rules_applied": rules_applied,
+        "confidence": round(confidence, 3),
+        "response_time_ms": elapsed,
+        "trace": trace,
     }

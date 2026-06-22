@@ -1,13 +1,17 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.core.database import get_db
-from app.core.security import get_current_admin
+from app.core.security import get_current_admin, get_current_user
 from app.models.user import User
-from app.models.knowledge import Document, KnowledgeItem
-from app.models.analytics import SalesReport, ChatMessage, ModerationQueue
-from app.schemas.analytics import SystemStats
+from app.models.knowledge import Document, KnowledgeItem, ModerationQueue
+from app.models.analytics import SalesReport
+from app.models.chat import ChatSession, ChatMessage
+from app.models.audit import AuditLog
+from app.schemas.analytics import SystemStats, AuditLogResponse
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
@@ -24,7 +28,7 @@ async def get_system_stats(
     total_knowledge = ki_result.scalar() or 0
 
     approved_result = await db.execute(
-        select(func.count(KnowledgeItem.id)).where(KnowledgeItem.is_approved == True)
+        select(func.count(KnowledgeItem.id)).where(KnowledgeItem.status == "approved")
     )
     approved_knowledge = approved_result.scalar() or 0
 
@@ -66,3 +70,54 @@ async def get_system_stats(
         pending_moderation=pending_moderation,
         positive_feedback_pct=round(positive_pct, 1) if positive_pct is not None else None,
     )
+
+
+@router.get("/audit", response_model=list[AuditLogResponse])
+async def get_audit_log(
+    limit: int = 100,
+    action: Optional[str] = None,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    if action:
+        query = query.where(AuditLog.action == action)
+    result = await db.execute(query)
+    return [AuditLogResponse.model_validate(a) for a in result.scalars().all()]
+
+
+@router.get("/health")
+async def health_check():
+    import redis.asyncio as aioredis
+    from app.core.config import settings
+    from app.core.database import engine
+
+    status = {"status": "ok", "services": {}}
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(select(func.count()).select_from(User.__table__))
+        status["services"]["mysql"] = "ok"
+    except Exception as e:
+        status["services"]["mysql"] = f"error: {str(e)}"
+        status["status"] = "degraded"
+
+    try:
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        await r.ping()
+        await r.close()
+        status["services"]["redis"] = "ok"
+    except Exception as e:
+        status["services"]["redis"] = f"error: {str(e)}"
+        status["status"] = "degraded"
+
+    try:
+        from app.core.qdrant import get_qdrant
+        client = get_qdrant()
+        client.get_collections()
+        status["services"]["qdrant"] = "ok"
+    except Exception as e:
+        status["services"]["qdrant"] = f"error: {str(e)}"
+        status["status"] = "degraded"
+
+    return status

@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, ForeignKey, Index, JSON
 
 from app.core.database import Base
 
@@ -7,61 +7,45 @@ from app.core.database import Base
 class SalesReport(Base):
     __tablename__ = "sales_reports"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     filename = Column(String(500), nullable=False)
     original_filename = Column(String(500), nullable=False)
+    file_path = Column(String(1000), nullable=False)
     period_start = Column(String(50), nullable=True)
     period_end = Column(String(50), nullable=True)
-    report_type = Column(String(50), default="sales")  # sales, reps, clients
+    branch = Column(String(255), nullable=True)
+    report_type = Column(String(50), default="sales")
     total_revenue = Column(Float, nullable=True)
     total_profit = Column(Float, nullable=True)
     total_clients = Column(Integer, nullable=True)
     total_skus = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
     analysis_json = Column(JSON, nullable=True)
-    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    status = Column(String(20), default="processing")  # processing, ready, error
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    metadata_json = Column(JSON, default=dict)
+    status = Column(String(20), nullable=False, default="pending")  # pending, processing, processed, error
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    processed_at = Column(DateTime, nullable=True)
 
 
 class SalesRecord(Base):
     __tablename__ = "sales_records"
 
-    id = Column(Integer, primary_key=True, index=True)
-    report_id = Column(Integer, ForeignKey("sales_reports.id"), nullable=False)
-    manager_name = Column(String(255), nullable=True)
-    client_name = Column(String(500), nullable=True)
-    product_name = Column(String(500), nullable=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, ForeignKey("sales_reports.id", ondelete="CASCADE"), nullable=False)
+    level = Column(String(20), nullable=False)  # rep, client, product
+    parent_id = Column(Integer, ForeignKey("sales_records.id"), nullable=True)
+    name = Column(Text, nullable=False)
     quantity = Column(Float, nullable=True)
     tonnage = Column(Float, nullable=True)
     revenue = Column(Float, nullable=True)
-    profit = Column(Float, nullable=True)
+    gross_profit = Column(Float, nullable=True)
     margin_pct = Column(Float, nullable=True)
-    record_level = Column(String(20), default="product")  # manager, client, product
+    metadata_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
-
-class ChatMessage(Base):
-    __tablename__ = "chat_messages"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    session_id = Column(String(100), nullable=False)
-    role = Column(String(20), nullable=False)  # user, assistant
-    content = Column(Text, nullable=False)
-    sources = Column(JSON, nullable=True)
-    feedback = Column(String(20), nullable=True)  # useful, not_useful
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-
-class ModerationQueue(Base):
-    __tablename__ = "moderation_queue"
-
-    id = Column(Integer, primary_key=True, index=True)
-    item_type = Column(String(50), nullable=False)  # new_knowledge, conflict, suggestion, bad_answer
-    title = Column(String(500), nullable=False)
-    content = Column(Text, nullable=False)
-    source_info = Column(Text, nullable=True)
-    status = Column(String(20), default="pending")  # pending, approved, rejected
-    reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    reviewed_at = Column(DateTime, nullable=True)
+    __table_args__ = (
+        Index("idx_sales_report", "report_id"),
+        Index("idx_sales_level", "level"),
+        Index("idx_sales_parent", "parent_id"),
+    )

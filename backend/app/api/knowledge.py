@@ -1,5 +1,6 @@
 import os
 import uuid
+import hashlib
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
@@ -9,46 +10,38 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import get_current_user, get_current_admin
 from app.core.config import UPLOAD_DIR
+from app.core.audit import log_action
 from app.models.user import User
-from app.models.knowledge import Document, KnowledgeItem, CorporateRule, AnswerCorrection
-from app.models.analytics import ModerationQueue
+from app.models.knowledge import (
+    Document, KnowledgeItem, KnowledgeItemVersion,
+    CorporateRule, AnswerCorrection, KnowledgeConflict, ModerationQueue,
+)
 from app.schemas.knowledge import (
     DocumentResponse,
-    KnowledgeItemCreate,
-    KnowledgeItemResponse,
-    CorporateRuleCreate,
-    CorporateRuleResponse,
-    AnswerCorrectionCreate,
-    AnswerCorrectionResponse,
-    ModerationItemResponse,
-    ModerationAction,
+    KnowledgeItemCreate, KnowledgeItemUpdate, KnowledgeItemResponse,
+    CorporateRuleCreate, CorporateRuleResponse,
+    AnswerCorrectionCreate, AnswerCorrectionResponse,
+    ModerationItemResponse, ModerationAction,
+    ConflictResponse, ConflictResolve,
 )
-from app.services.knowledge_service import (
-    add_document_to_knowledge_base,
-    add_knowledge_item_to_vector_db,
-    add_correction_to_vector_db,
-    generate_document_summary,
-    extract_knowledge_from_text,
-    delete_document_from_vector_db,
-)
-from app.services.document_processor import extract_text
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".xls", ".csv", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".xls", ".csv", ".txt", ".pptx"}
 
 
-async def process_document_background(
-    document_id: int,
-    file_path: str,
-    category: Optional[str],
-):
+async def process_document_background(document_id: int, file_path: str, category: str):
     from app.core.database import async_session
+    from app.services.document_processor import extract_text
+    from app.services.knowledge_service import (
+        add_document_to_knowledge_base,
+        extract_knowledge_from_text,
+        generate_document_summary,
+    )
 
     async with async_session() as db:
         try:
             text = extract_text(file_path)
-
             summary = await generate_document_summary(text)
             chunk_count = await add_document_to_knowledge_base(file_path, document_id, category)
             knowledge_items = await extract_knowledge_from_text(text)
@@ -58,14 +51,31 @@ async def process_document_background(
             if doc:
                 doc.description = summary
                 doc.chunk_count = chunk_count
-                doc.status = "ready"
+                doc.status = "processed"
 
             for item in knowledge_items:
+                ki = KnowledgeItem(
+                    document_id=document_id,
+                    title=item.get("title", ""),
+                    content=item.get("content", ""),
+                    category=category,
+                    status="pending_review",
+                    source_chunk=item.get("source_chunk", ""),
+                )
+                db.add(ki)
+                await db.flush()
+                await db.refresh(ki)
+
                 mod_item = ModerationQueue(
                     item_type="new_knowledge",
-                    title=item["title"],
-                    content=item["content"],
-                    source_info=f"Document ID: {document_id}",
+                    item_id=ki.id,
+                    action="approve_knowledge",
+                    payload={
+                        "title": ki.title,
+                        "content": ki.content,
+                        "category": category,
+                        "document_id": document_id,
+                    },
                     status="pending",
                 )
                 db.add(mod_item)
@@ -76,15 +86,17 @@ async def process_document_background(
             doc = result.scalar_one_or_none()
             if doc:
                 doc.status = "error"
-                doc.description = f"Error: {str(e)}"
+                doc.error_message = str(e)
             await db.commit()
 
+
+# --- Documents ---
 
 @router.post("/documents/upload", response_model=DocumentResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    category: Optional[str] = Form(None),
+    category: str = Form("other"),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -92,25 +104,38 @@ async def upload_document(
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
 
+    content = await file.read()
+
+    checksum = hashlib.sha256(content).hexdigest()
+    result = await db.execute(select(Document).where(Document.checksum_sha256 == checksum))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="This file has already been uploaded (duplicate checksum)")
+
     unique_name = f"{uuid.uuid4()}{ext}"
     file_path = str(UPLOAD_DIR / "documents" / unique_name)
-
-    content = await file.read()
     with open(file_path, "wb") as f:
         f.write(content)
 
     document = Document(
+        uploaded_by=current_user.id,
         filename=unique_name,
         original_filename=file.filename,
         file_type=ext.lstrip("."),
+        file_path=file_path,
         file_size=len(content),
         category=category,
-        uploaded_by=current_user.id,
         status="processing",
+        checksum_sha256=checksum,
     )
     db.add(document)
     await db.flush()
     await db.refresh(document)
+
+    await log_action(
+        db, "upload_document", user_id=current_user.id,
+        entity_type="document", entity_id=document.id,
+        new_value={"filename": file.filename, "category": category},
+    )
 
     background_tasks.add_task(process_document_background, document.id, file_path, category)
 
@@ -127,8 +152,20 @@ async def list_documents(
     if category:
         query = query.where(Document.category == category)
     result = await db.execute(query)
-    docs = result.scalars().all()
-    return [DocumentResponse.model_validate(d) for d in docs]
+    return [DocumentResponse.model_validate(d) for d in result.scalars().all()]
+
+
+@router.get("/documents/{document_id}", response_model=DocumentResponse)
+async def get_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return DocumentResponse.model_validate(doc)
 
 
 @router.delete("/documents/{document_id}")
@@ -142,30 +179,56 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = str(UPLOAD_DIR / "documents" / doc.filename)
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    if os.path.exists(doc.file_path):
+        os.remove(doc.file_path)
 
-    delete_document_from_vector_db(document_id)
+    from app.core.qdrant import delete_by_filter, KNOWLEDGE_COLLECTION
+    try:
+        delete_by_filter(KNOWLEDGE_COLLECTION, "document_id", document_id)
+    except Exception:
+        pass
+
+    await log_action(
+        db, "delete_document", user_id=current_user.id,
+        entity_type="document", entity_id=document_id,
+    )
     await db.delete(doc)
     return {"status": "deleted"}
 
 
+@router.post("/documents/{document_id}/reprocess")
+async def reprocess_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc.status = "processing"
+    background_tasks.add_task(process_document_background, doc.id, doc.file_path, doc.category)
+    return {"status": "reprocessing"}
+
+
+# --- Knowledge Items ---
+
 @router.get("/items", response_model=list[KnowledgeItemResponse])
 async def list_knowledge_items(
     category: Optional[str] = None,
-    approved_only: bool = False,
+    status: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(KnowledgeItem).order_by(KnowledgeItem.created_at.desc())
     if category:
         query = query.where(KnowledgeItem.category == category)
-    if approved_only:
-        query = query.where(KnowledgeItem.is_approved == True)
+    if status:
+        query = query.where(KnowledgeItem.status == status)
     result = await db.execute(query)
-    items = result.scalars().all()
-    return [KnowledgeItemResponse.model_validate(i) for i in items]
+    return [KnowledgeItemResponse.model_validate(i) for i in result.scalars().all()]
 
 
 @router.post("/items", response_model=KnowledgeItemResponse)
@@ -178,23 +241,28 @@ async def create_knowledge_item(
         title=item.title,
         content=item.content,
         category=item.category,
-        is_approved=True,
+        priority=item.priority,
+        status="approved",
         approved_by=current_user.id,
-        created_by=current_user.id,
     )
     db.add(knowledge)
     await db.flush()
     await db.refresh(knowledge)
 
+    from app.services.knowledge_service import add_knowledge_item_to_vector_db
     await add_knowledge_item_to_vector_db(knowledge.id, knowledge.content, knowledge.category)
 
+    await log_action(
+        db, "create_knowledge", user_id=current_user.id,
+        entity_type="knowledge_item", entity_id=knowledge.id,
+    )
     return KnowledgeItemResponse.model_validate(knowledge)
 
 
 @router.put("/items/{item_id}", response_model=KnowledgeItemResponse)
 async def update_knowledge_item(
     item_id: int,
-    item: KnowledgeItemCreate,
+    item: KnowledgeItemUpdate,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -203,12 +271,33 @@ async def update_knowledge_item(
     if not knowledge:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
 
-    knowledge.title = item.title
-    knowledge.content = item.content
-    knowledge.category = item.category
+    version_entry = KnowledgeItemVersion(
+        item_id=knowledge.id,
+        version=knowledge.version,
+        title=knowledge.title,
+        content=knowledge.content,
+        changed_by=current_user.id,
+        change_reason="Updated via admin panel",
+    )
+    db.add(version_entry)
 
+    if item.title is not None:
+        knowledge.title = item.title
+    if item.content is not None:
+        knowledge.content = item.content
+    if item.category is not None:
+        knowledge.category = item.category
+    if item.priority is not None:
+        knowledge.priority = item.priority
+    knowledge.version += 1
+
+    from app.services.knowledge_service import add_knowledge_item_to_vector_db
     await add_knowledge_item_to_vector_db(knowledge.id, knowledge.content, knowledge.category)
 
+    await log_action(
+        db, "update_knowledge", user_id=current_user.id,
+        entity_type="knowledge_item", entity_id=knowledge.id,
+    )
     return KnowledgeItemResponse.model_validate(knowledge)
 
 
@@ -223,8 +312,63 @@ async def delete_knowledge_item(
     if not knowledge:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
 
-    await db.delete(knowledge)
-    return {"status": "deleted"}
+    knowledge.status = "archived"
+    await log_action(
+        db, "delete_knowledge", user_id=current_user.id,
+        entity_type="knowledge_item", entity_id=knowledge.id,
+    )
+    return {"status": "archived"}
+
+
+@router.get("/items/{item_id}/versions")
+async def get_knowledge_versions(
+    item_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(KnowledgeItemVersion).where(KnowledgeItemVersion.item_id == item_id)
+        .order_by(KnowledgeItemVersion.version.desc())
+    )
+    versions = result.scalars().all()
+    return [
+        {
+            "id": v.id,
+            "version": v.version,
+            "title": v.title,
+            "content": v.content,
+            "changed_by": v.changed_by,
+            "change_reason": v.change_reason,
+            "created_at": v.created_at.isoformat(),
+        }
+        for v in versions
+    ]
+
+
+# --- Reindex ---
+
+@router.post("/reindex")
+async def reindex_knowledge(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    await log_action(db, "reindex_knowledge", user_id=current_user.id)
+    background_tasks.add_task(_reindex_all)
+    return {"status": "reindexing started"}
+
+
+async def _reindex_all():
+    from app.core.database import async_session
+    from app.services.knowledge_service import add_knowledge_item_to_vector_db
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(KnowledgeItem).where(KnowledgeItem.status == "approved")
+        )
+        items = result.scalars().all()
+        for item in items:
+            await add_knowledge_item_to_vector_db(item.id, item.content, item.category)
 
 
 # --- Corporate Rules ---
@@ -234,9 +378,10 @@ async def list_rules(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(CorporateRule).order_by(CorporateRule.created_at.desc()))
-    rules = result.scalars().all()
-    return [CorporateRuleResponse.model_validate(r) for r in rules]
+    result = await db.execute(
+        select(CorporateRule).order_by(CorporateRule.priority.desc(), CorporateRule.created_at.desc())
+    )
+    return [CorporateRuleResponse.model_validate(r) for r in result.scalars().all()]
 
 
 @router.post("/rules", response_model=CorporateRuleResponse)
@@ -246,15 +391,47 @@ async def create_rule(
     db: AsyncSession = Depends(get_db),
 ):
     corporate_rule = CorporateRule(
+        created_by=current_user.id,
         rule_type=rule.rule_type,
         title=rule.title,
         content=rule.content,
-        created_by=current_user.id,
+        priority=rule.priority,
+        category=rule.category,
     )
     db.add(corporate_rule)
     await db.flush()
     await db.refresh(corporate_rule)
+
+    await log_action(
+        db, "create_rule", user_id=current_user.id,
+        entity_type="corporate_rule", entity_id=corporate_rule.id,
+    )
     return CorporateRuleResponse.model_validate(corporate_rule)
+
+
+@router.put("/rules/{rule_id}", response_model=CorporateRuleResponse)
+async def update_rule(
+    rule_id: int,
+    rule: CorporateRuleCreate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(CorporateRule).where(CorporateRule.id == rule_id))
+    existing = result.scalar_one_or_none()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    existing.rule_type = rule.rule_type
+    existing.title = rule.title
+    existing.content = rule.content
+    existing.priority = rule.priority
+    existing.category = rule.category
+
+    await log_action(
+        db, "update_rule", user_id=current_user.id,
+        entity_type="corporate_rule", entity_id=rule_id,
+    )
+    return CorporateRuleResponse.model_validate(existing)
 
 
 @router.delete("/rules/{rule_id}")
@@ -268,7 +445,25 @@ async def delete_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     await db.delete(rule)
+    await log_action(
+        db, "delete_rule", user_id=current_user.id,
+        entity_type="corporate_rule", entity_id=rule_id,
+    )
     return {"status": "deleted"}
+
+
+@router.patch("/rules/{rule_id}/toggle")
+async def toggle_rule(
+    rule_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(CorporateRule).where(CorporateRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    rule.is_active = not rule.is_active
+    return {"status": "ok", "is_active": rule.is_active}
 
 
 # --- Answer Corrections ---
@@ -279,8 +474,7 @@ async def list_corrections(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(AnswerCorrection).order_by(AnswerCorrection.created_at.desc()))
-    corrections = result.scalars().all()
-    return [AnswerCorrectionResponse.model_validate(c) for c in corrections]
+    return [AnswerCorrectionResponse.model_validate(c) for c in result.scalars().all()]
 
 
 @router.post("/corrections", response_model=AnswerCorrectionResponse)
@@ -290,21 +484,29 @@ async def create_correction(
     db: AsyncSession = Depends(get_db),
 ):
     answer_correction = AnswerCorrection(
+        created_by=current_user.id,
+        message_id=correction.message_id,
         original_question=correction.original_question,
         original_answer=correction.original_answer,
         corrected_answer=correction.corrected_answer,
-        corrected_by=current_user.id,
+        correction_type="answer_fix",
+        notes=correction.notes,
     )
     db.add(answer_correction)
     await db.flush()
     await db.refresh(answer_correction)
 
+    from app.services.knowledge_service import add_correction_to_vector_db
     await add_correction_to_vector_db(
         answer_correction.id,
         answer_correction.original_question,
         answer_correction.corrected_answer,
     )
 
+    await log_action(
+        db, "create_correction", user_id=current_user.id,
+        entity_type="answer_correction", entity_id=answer_correction.id,
+    )
     return AnswerCorrectionResponse.model_validate(answer_correction)
 
 
@@ -313,19 +515,35 @@ async def create_correction(
 @router.get("/moderation", response_model=list[ModerationItemResponse])
 async def list_moderation_queue(
     status: Optional[str] = "pending",
+    item_type: Optional[str] = None,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(ModerationQueue).order_by(ModerationQueue.created_at.desc())
     if status:
         query = query.where(ModerationQueue.status == status)
+    if item_type:
+        query = query.where(ModerationQueue.item_type == item_type)
     result = await db.execute(query)
-    items = result.scalars().all()
-    return [ModerationItemResponse.model_validate(i) for i in items]
+    return [ModerationItemResponse.model_validate(i) for i in result.scalars().all()]
 
 
-@router.post("/moderation/{item_id}/action")
-async def moderate_item(
+@router.get("/moderation/stats")
+async def moderation_stats(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import func
+    result = await db.execute(
+        select(ModerationQueue.status, func.count(ModerationQueue.id))
+        .group_by(ModerationQueue.status)
+    )
+    stats = {row[0]: row[1] for row in result.all()}
+    return stats
+
+
+@router.post("/moderation/{item_id}/approve")
+async def approve_moderation(
     item_id: int,
     action: ModerationAction,
     current_user: User = Depends(get_current_admin),
@@ -338,28 +556,141 @@ async def moderate_item(
 
     from datetime import datetime, timezone
 
-    if action.action == "approve":
-        item.status = "approved"
-        item.reviewed_by = current_user.id
-        item.reviewed_at = datetime.now(timezone.utc)
+    item.status = "approved"
+    item.reviewed_by = current_user.id
+    item.reviewed_at = datetime.now(timezone.utc)
+    item.review_notes = action.notes
 
-        knowledge = KnowledgeItem(
-            title=item.title,
-            content=item.content,
-            is_approved=True,
-            approved_by=current_user.id,
-            created_by=current_user.id,
-        )
-        db.add(knowledge)
-        await db.flush()
-        await db.refresh(knowledge)
+    if item.item_type in ("new_knowledge", "self_learned") and item.item_id:
+        ki_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == item.item_id))
+        ki = ki_result.scalar_one_or_none()
+        if ki:
+            ki.status = "approved"
+            ki.approved_by = current_user.id
+            from app.services.knowledge_service import add_knowledge_item_to_vector_db
+            await add_knowledge_item_to_vector_db(ki.id, ki.content, ki.category)
 
-        await add_knowledge_item_to_vector_db(knowledge.id, knowledge.content)
-    elif action.action == "reject":
-        item.status = "rejected"
-        item.reviewed_by = current_user.id
-        item.reviewed_at = datetime.now(timezone.utc)
-    else:
-        raise HTTPException(status_code=400, detail="Invalid action")
+    await log_action(
+        db, "approve_moderation", user_id=current_user.id,
+        entity_type="moderation_queue", entity_id=item_id,
+    )
+    return {"status": "approved"}
 
-    return {"status": item.status}
+
+@router.post("/moderation/{item_id}/reject")
+async def reject_moderation(
+    item_id: int,
+    action: ModerationAction,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(ModerationQueue).where(ModerationQueue.id == item_id))
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Moderation item not found")
+
+    from datetime import datetime, timezone
+
+    item.status = "rejected"
+    item.reviewed_by = current_user.id
+    item.reviewed_at = datetime.now(timezone.utc)
+    item.review_notes = action.notes
+
+    if item.item_id:
+        ki_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == item.item_id))
+        ki = ki_result.scalar_one_or_none()
+        if ki:
+            ki.status = "rejected"
+
+    await log_action(
+        db, "reject_moderation", user_id=current_user.id,
+        entity_type="moderation_queue", entity_id=item_id,
+    )
+    return {"status": "rejected"}
+
+
+# --- Knowledge Conflicts ---
+
+@router.get("/conflicts", response_model=list[ConflictResponse])
+async def list_conflicts(
+    resolution: Optional[str] = "pending",
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(KnowledgeConflict).order_by(KnowledgeConflict.created_at.desc())
+    if resolution:
+        query = query.where(KnowledgeConflict.resolution == resolution)
+    result = await db.execute(query)
+    return [ConflictResponse.model_validate(c) for c in result.scalars().all()]
+
+
+@router.get("/conflicts/{conflict_id}", response_model=ConflictResponse)
+async def get_conflict(
+    conflict_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(KnowledgeConflict).where(KnowledgeConflict.id == conflict_id))
+    conflict = result.scalar_one_or_none()
+    if not conflict:
+        raise HTTPException(status_code=404, detail="Conflict not found")
+    return ConflictResponse.model_validate(conflict)
+
+
+@router.post("/conflicts/{conflict_id}/resolve")
+async def resolve_conflict(
+    conflict_id: int,
+    data: ConflictResolve,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(KnowledgeConflict).where(KnowledgeConflict.id == conflict_id))
+    conflict = result.scalar_one_or_none()
+    if not conflict:
+        raise HTTPException(status_code=404, detail="Conflict not found")
+
+    from datetime import datetime, timezone
+
+    conflict.resolution = data.resolution
+    conflict.resolved_by = current_user.id
+    conflict.resolved_at = datetime.now(timezone.utc)
+    conflict.notes = data.notes
+
+    if data.resolution == "replace_old":
+        old_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == conflict.existing_item_id))
+        old_item = old_result.scalar_one_or_none()
+        if old_item:
+            old_item.status = "archived"
+
+        new_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == conflict.new_item_id))
+        new_item = new_result.scalar_one_or_none()
+        if new_item:
+            new_item.status = "approved"
+            new_item.approved_by = current_user.id
+
+    elif data.resolution == "keep_old":
+        new_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == conflict.new_item_id))
+        new_item = new_result.scalar_one_or_none()
+        if new_item:
+            new_item.status = "rejected"
+
+    elif data.resolution == "merge" and data.merged_content:
+        old_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == conflict.existing_item_id))
+        old_item = old_result.scalar_one_or_none()
+        if old_item:
+            old_item.content = data.merged_content
+            old_item.version += 1
+            from app.services.knowledge_service import add_knowledge_item_to_vector_db
+            await add_knowledge_item_to_vector_db(old_item.id, old_item.content, old_item.category)
+
+        new_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == conflict.new_item_id))
+        new_item = new_result.scalar_one_or_none()
+        if new_item:
+            new_item.status = "archived"
+
+    await log_action(
+        db, "resolve_conflict", user_id=current_user.id,
+        entity_type="knowledge_conflict", entity_id=conflict_id,
+        new_value={"resolution": data.resolution},
+    )
+    return {"status": "resolved", "resolution": data.resolution}

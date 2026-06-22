@@ -32,5 +32,11 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# ChromaDB
+# ChromaDB (legacy)
 chroma/
+
+# MySQL
+mysql_data/
+
+# Alembic
+alembic/versions/*.pyc

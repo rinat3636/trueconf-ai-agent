@@ -2,31 +2,13 @@ import os
 import uuid
 from typing import List, Optional
 
-import chromadb
-from openai import AsyncOpenAI
-
-from app.core.config import settings
+from app.core.llm import chat_completion, get_embedding
+from app.core.qdrant import (
+    upsert_vector, search_vectors, delete_by_filter,
+    KNOWLEDGE_COLLECTION, CORRECTIONS_COLLECTION,
+)
 from app.services.document_processor import extract_text, chunk_text
-
-
-client = AsyncOpenAI(
-    api_key=settings.AITUNNEL_API_KEY,
-    base_url=settings.AITUNNEL_BASE_URL,
-)
-
-chroma_client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
-collection = chroma_client.get_or_create_collection(
-    name="knowledge_base",
-    metadata={"hnsw:space": "cosine"},
-)
-
-
-async def get_embedding(text: str) -> List[float]:
-    response = await client.embeddings.create(
-        model=settings.LLM_EMBEDDING_MODEL,
-        input=text,
-    )
-    return response.data[0].embedding
+from app.core.config import settings
 
 
 async def add_document_to_knowledge_base(
@@ -39,21 +21,18 @@ async def add_document_to_knowledge_base(
 
     for i, chunk in enumerate(chunks):
         embedding = await get_embedding(chunk)
-        chunk_id = f"doc_{document_id}_chunk_{i}"
-        metadata = {
-            "document_id": str(document_id),
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"doc_{document_id}_chunk_{i}"))
+        payload = {
+            "document_id": document_id,
             "chunk_index": i,
             "source": os.path.basename(file_path),
+            "content": chunk,
+            "type": "document_chunk",
         }
         if category:
-            metadata["category"] = category
+            payload["category"] = category
 
-        collection.upsert(
-            ids=[chunk_id],
-            embeddings=[embedding],
-            documents=[chunk],
-            metadatas=[metadata],
-        )
+        upsert_vector(KNOWLEDGE_COLLECTION, point_id, embedding, payload)
 
     return len(chunks)
 
@@ -64,17 +43,17 @@ async def add_knowledge_item_to_vector_db(
     category: Optional[str] = None,
 ):
     embedding = await get_embedding(content)
-    item_id = f"knowledge_{knowledge_id}"
-    metadata = {"knowledge_id": str(knowledge_id), "source": "manual"}
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"knowledge_{knowledge_id}"))
+    payload = {
+        "knowledge_id": knowledge_id,
+        "source": "manual",
+        "content": content,
+        "type": "knowledge_item",
+    }
     if category:
-        metadata["category"] = category
+        payload["category"] = category
 
-    collection.upsert(
-        ids=[item_id],
-        embeddings=[embedding],
-        documents=[content],
-        metadatas=[metadata],
-    )
+    upsert_vector(KNOWLEDGE_COLLECTION, point_id, embedding, payload)
 
 
 async def add_correction_to_vector_db(
@@ -84,58 +63,77 @@ async def add_correction_to_vector_db(
 ):
     combined = f"Вопрос: {question}\nОтвет: {answer}"
     embedding = await get_embedding(combined)
-    item_id = f"correction_{correction_id}"
-    collection.upsert(
-        ids=[item_id],
-        embeddings=[embedding],
-        documents=[combined],
-        metadatas={"correction_id": str(correction_id), "source": "correction"},
-    )
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"correction_{correction_id}"))
+    payload = {
+        "correction_id": correction_id,
+        "question": question,
+        "answer": answer,
+        "content": combined,
+        "type": "correction",
+    }
+    upsert_vector(CORRECTIONS_COLLECTION, point_id, embedding, payload)
 
 
 async def search_knowledge(
     query: str,
-    n_results: int = 5,
+    n_results: int = 10,
     category: Optional[str] = None,
+    score_threshold: float = 0.35,
 ) -> List[dict]:
     embedding = await get_embedding(query)
 
-    where_filter = None
+    filters = {}
     if category:
-        where_filter = {"category": category}
+        filters["category"] = category
 
+    results = search_vectors(
+        KNOWLEDGE_COLLECTION,
+        embedding,
+        limit=n_results,
+        score_threshold=score_threshold,
+        filters=filters if filters else None,
+    )
+
+    return [
+        {
+            "content": r["payload"].get("content", ""),
+            "metadata": r["payload"],
+            "score": r["score"],
+        }
+        for r in results
+    ]
+
+
+async def search_corrections(
+    query: str,
+    score_threshold: float = 0.85,
+) -> Optional[dict]:
+    embedding = await get_embedding(query)
+
+    results = search_vectors(
+        CORRECTIONS_COLLECTION,
+        embedding,
+        limit=1,
+        score_threshold=score_threshold,
+    )
+
+    if results:
+        return results[0]["payload"]
+    return None
+
+
+def delete_document_from_vector_db(document_id: int):
     try:
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=n_results,
-            where=where_filter,
-        )
+        delete_by_filter(KNOWLEDGE_COLLECTION, "document_id", document_id)
     except Exception:
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=n_results,
-        )
-
-    items = []
-    if results and results["documents"]:
-        for i, doc in enumerate(results["documents"][0]):
-            meta = results["metadatas"][0][i] if results["metadatas"] else {}
-            distance = results["distances"][0][i] if results["distances"] else 1.0
-            items.append({
-                "content": doc,
-                "metadata": meta,
-                "relevance": 1 - distance,
-            })
-
-    return items
+        pass
 
 
 async def generate_document_summary(text: str) -> str:
     if len(text) > 8000:
         text = text[:8000]
 
-    response = await client.chat.completions.create(
-        model=settings.LLM_CHAT_MODEL,
+    return await chat_completion(
         messages=[
             {
                 "role": "system",
@@ -151,17 +149,14 @@ async def generate_document_summary(text: str) -> str:
             },
         ],
         max_tokens=1000,
-        temperature=0.3,
     )
-    return response.choices[0].message.content
 
 
 async def extract_knowledge_from_text(text: str) -> List[dict]:
     if len(text) > 8000:
         text = text[:8000]
 
-    response = await client.chat.completions.create(
-        model=settings.LLM_CHAT_MODEL,
+    result_text = await chat_completion(
         messages=[
             {
                 "role": "system",
@@ -180,12 +175,9 @@ async def extract_knowledge_from_text(text: str) -> List[dict]:
             },
         ],
         max_tokens=2000,
-        temperature=0.3,
     )
 
-    result_text = response.choices[0].message.content
     knowledge_items = []
-
     parts = result_text.split("---")
     for part in parts:
         part = part.strip()
@@ -194,15 +186,10 @@ async def extract_knowledge_from_text(text: str) -> List[dict]:
             title = lines[0].replace("ЗНАНИЕ:", "").strip()
             content = lines[1].strip() if len(lines) > 1 else title
             if title:
-                knowledge_items.append({"title": title, "content": content})
+                knowledge_items.append({
+                    "title": title,
+                    "content": content,
+                    "source_chunk": part,
+                })
 
     return knowledge_items
-
-
-def delete_document_from_vector_db(document_id: int):
-    try:
-        existing = collection.get(where={"document_id": str(document_id)})
-        if existing and existing["ids"]:
-            collection.delete(ids=existing["ids"])
-    except Exception:
-        pass
