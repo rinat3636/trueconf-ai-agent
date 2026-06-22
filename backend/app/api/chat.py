@@ -43,7 +43,21 @@ async def ask_question(
     db.add(user_msg)
     await db.flush()
 
-    answer_data = await generate_answer(request.message, db)
+    try:
+        answer_data = await generate_answer(request.message, db)
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "rate_limit" in error_msg.lower() or "лимит" in error_msg.lower():
+            answer_data = {
+                "answer": "Превышен лимит запросов к ИИ. Попробуйте через пару минут.",
+                "sources": [],
+                "rules_applied": [],
+                "confidence": 0.0,
+                "response_time_ms": 0,
+                "trace": {"error": error_msg},
+            }
+        else:
+            raise
 
     assistant_msg = ChatMessage(
         session_id=session.id,

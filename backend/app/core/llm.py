@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 
@@ -9,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 _groq_client: Optional[AsyncOpenAI] = None
 _openai_client: Optional[AsyncOpenAI] = None
+_google_client: Optional[AsyncOpenAI] = None
 
 
 def get_groq_client() -> Optional[AsyncOpenAI]:
@@ -28,6 +30,16 @@ def get_openai_client() -> Optional[AsyncOpenAI]:
     return _openai_client
 
 
+def get_google_client() -> Optional[AsyncOpenAI]:
+    global _google_client
+    if _google_client is None and settings.GOOGLE_API_KEY:
+        _google_client = AsyncOpenAI(
+            api_key=settings.GOOGLE_API_KEY,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+    return _google_client
+
+
 async def chat_completion(
     messages: list[dict],
     model: Optional[str] = None,
@@ -35,32 +47,69 @@ async def chat_completion(
     max_tokens: int = 2000,
 ) -> str:
     model = model or settings.LLM_CHAT_MODEL
+    max_retries = 3
+    last_error = None
 
-    if settings.LLM_PROVIDER == "groq":
-        client = get_groq_client()
-        if client:
+    # Primary: Google Gemini
+    google_client = get_google_client()
+    if google_client:
+        for attempt in range(max_retries):
             try:
-                response = await client.chat.completions.create(
-                    model=model,
+                response = await google_client.chat.completions.create(
+                    model="gemini-2.0-flash",
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
                 return response.choices[0].message.content
             except Exception as e:
-                logger.warning(f"Groq failed, falling back to OpenAI: {e}")
+                last_error = e
+                error_str = str(e).lower()
+                if "429" in error_str or "rate" in error_str or "quota" in error_str:
+                    wait_time = 15 * (attempt + 1)
+                    logger.warning(
+                        "Google Gemini rate limit (attempt %d/%d), waiting %ds",
+                        attempt + 1, max_retries, wait_time,
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.warning("Google Gemini failed, trying fallback: %s", e)
+                    break
 
+    # Fallback 1: Groq
+    groq_client = get_groq_client()
+    if groq_client:
+        try:
+            response = await groq_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.warning("Groq failed: %s", e)
+
+    # Fallback 2: OpenAI
     client = get_openai_client()
     if client:
-        response = await client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content
+        try:
+            response = await client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.warning("OpenAI failed: %s", e)
 
-    raise RuntimeError("No LLM provider configured. Set GROQ_API_KEY or OPENAI_API_KEY.")
+    if last_error and ("rate_limit" in str(last_error).lower() or "429" in str(last_error).lower()):
+        raise RuntimeError(
+            "Превышен лимит запросов к ИИ (Groq rate limit). "
+            "Попробуйте через несколько минут."
+        )
+    raise RuntimeError("No LLM provider configured. Set GROQ_API_KEY, GOOGLE_API_KEY or OPENAI_API_KEY.")
 
 
 async def get_embedding(text: str) -> list[float]:

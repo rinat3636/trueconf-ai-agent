@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # LLM
     GROQ_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
     LLM_PROVIDER: str = "groq"  # "groq" or "openai"
     LLM_CHAT_MODEL: str = "llama-3.3-70b-versatile"
     LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
