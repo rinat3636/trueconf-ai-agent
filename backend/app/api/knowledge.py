@@ -31,63 +31,12 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".xls", ".csv", ".txt", ".pptx"}
 
 
 async def process_document_background(document_id: int, file_path: str, category: str):
+    """Background task: full document processing pipeline with conflict detection."""
     from app.core.database import async_session
-    from app.services.document_processor import extract_text
-    from app.services.knowledge_service import (
-        add_document_to_knowledge_base,
-        extract_knowledge_from_text,
-        generate_document_summary,
-    )
+    from app.services.self_learning import process_document_pipeline
 
     async with async_session() as db:
-        try:
-            text = extract_text(file_path)
-            summary = await generate_document_summary(text)
-            chunk_count = await add_document_to_knowledge_base(file_path, document_id, category)
-            knowledge_items = await extract_knowledge_from_text(text)
-
-            result = await db.execute(select(Document).where(Document.id == document_id))
-            doc = result.scalar_one_or_none()
-            if doc:
-                doc.description = summary
-                doc.chunk_count = chunk_count
-                doc.status = "processed"
-
-            for item in knowledge_items:
-                ki = KnowledgeItem(
-                    document_id=document_id,
-                    title=item.get("title", ""),
-                    content=item.get("content", ""),
-                    category=category,
-                    status="pending_review",
-                    source_chunk=item.get("source_chunk", ""),
-                )
-                db.add(ki)
-                await db.flush()
-                await db.refresh(ki)
-
-                mod_item = ModerationQueue(
-                    item_type="new_knowledge",
-                    item_id=ki.id,
-                    action="approve_knowledge",
-                    payload={
-                        "title": ki.title,
-                        "content": ki.content,
-                        "category": category,
-                        "document_id": document_id,
-                    },
-                    status="pending",
-                )
-                db.add(mod_item)
-
-            await db.commit()
-        except Exception as e:
-            result = await db.execute(select(Document).where(Document.id == document_id))
-            doc = result.scalar_one_or_none()
-            if doc:
-                doc.status = "error"
-                doc.error_message = str(e)
-            await db.commit()
+        await process_document_pipeline(document_id, file_path, db)
 
 
 # --- Documents ---
@@ -250,7 +199,10 @@ async def create_knowledge_item(
     await db.refresh(knowledge)
 
     from app.services.knowledge_service import add_knowledge_item_to_vector_db
-    await add_knowledge_item_to_vector_db(knowledge.id, knowledge.content, knowledge.category)
+    await add_knowledge_item_to_vector_db(
+        knowledge.id, knowledge.content, knowledge.title,
+        knowledge.category, knowledge.priority,
+    )
 
     await log_action(
         db, "create_knowledge", user_id=current_user.id,
@@ -292,7 +244,10 @@ async def update_knowledge_item(
     knowledge.version += 1
 
     from app.services.knowledge_service import add_knowledge_item_to_vector_db
-    await add_knowledge_item_to_vector_db(knowledge.id, knowledge.content, knowledge.category)
+    await add_knowledge_item_to_vector_db(
+        knowledge.id, knowledge.content, knowledge.title,
+        knowledge.category, knowledge.priority,
+    )
 
     await log_action(
         db, "update_knowledge", user_id=current_user.id,
@@ -360,15 +315,47 @@ async def reindex_knowledge(
 
 async def _reindex_all():
     from app.core.database import async_session
-    from app.services.knowledge_service import add_knowledge_item_to_vector_db
+    from app.services.knowledge_service import (
+        add_knowledge_item_to_vector_db,
+        add_correction_to_vector_db,
+        add_document_to_knowledge_base,
+    )
 
     async with async_session() as db:
+        # Re-embed approved knowledge items
         result = await db.execute(
             select(KnowledgeItem).where(KnowledgeItem.status == "approved")
         )
         items = result.scalars().all()
         for item in items:
-            await add_knowledge_item_to_vector_db(item.id, item.content, item.category)
+            await add_knowledge_item_to_vector_db(
+                item.id, item.content, item.title, item.category, item.priority
+            )
+
+        # Re-embed active corrections
+        corr_result = await db.execute(
+            select(AnswerCorrection).where(AnswerCorrection.is_active == True)
+        )
+        corrections = corr_result.scalars().all()
+        for c in corrections:
+            await add_correction_to_vector_db(
+                c.id, c.original_question, c.corrected_answer,
+                c.correction_type, c.priority,
+            )
+
+        # Re-embed processed documents
+        doc_result = await db.execute(
+            select(Document).where(Document.status == "processed")
+        )
+        docs = doc_result.scalars().all()
+        for doc in docs:
+            if os.path.exists(doc.file_path):
+                try:
+                    await add_document_to_knowledge_base(
+                        doc.file_path, doc.id, doc.category
+                    )
+                except Exception:
+                    pass
 
 
 # --- Corporate Rules ---
@@ -489,7 +476,8 @@ async def create_correction(
         original_question=correction.original_question,
         original_answer=correction.original_answer,
         corrected_answer=correction.corrected_answer,
-        correction_type="answer_fix",
+        correction_type=correction.correction_type,
+        priority=95 if correction.correction_type == "answer_fix" else 80,
         notes=correction.notes,
     )
     db.add(answer_correction)
@@ -501,11 +489,31 @@ async def create_correction(
         answer_correction.id,
         answer_correction.original_question,
         answer_correction.corrected_answer,
+        correction_type=correction.correction_type,
+        priority=answer_correction.priority,
     )
+
+    if correction.correction_type != "answer_fix":
+        mod_item = ModerationQueue(
+            item_type="correction_review",
+            item_id=answer_correction.id,
+            action=f"review_{correction.correction_type}",
+            payload={
+                "correction_id": answer_correction.id,
+                "correction_type": correction.correction_type,
+                "original_question": correction.original_question,
+                "corrected_answer": correction.corrected_answer[:500],
+                "notes": correction.notes,
+            },
+            status="pending",
+            created_by=current_user.id,
+        )
+        db.add(mod_item)
 
     await log_action(
         db, "create_correction", user_id=current_user.id,
         entity_type="answer_correction", entity_id=answer_correction.id,
+        new_value={"correction_type": correction.correction_type},
     )
     return AnswerCorrectionResponse.model_validate(answer_correction)
 
@@ -568,7 +576,9 @@ async def approve_moderation(
             ki.status = "approved"
             ki.approved_by = current_user.id
             from app.services.knowledge_service import add_knowledge_item_to_vector_db
-            await add_knowledge_item_to_vector_db(ki.id, ki.content, ki.category)
+            await add_knowledge_item_to_vector_db(
+                ki.id, ki.content, ki.title, ki.category, ki.priority
+            )
 
     await log_action(
         db, "approve_moderation", user_id=current_user.id,
@@ -681,7 +691,10 @@ async def resolve_conflict(
             old_item.content = data.merged_content
             old_item.version += 1
             from app.services.knowledge_service import add_knowledge_item_to_vector_db
-            await add_knowledge_item_to_vector_db(old_item.id, old_item.content, old_item.category)
+            await add_knowledge_item_to_vector_db(
+                old_item.id, old_item.content, old_item.title,
+                old_item.category, old_item.priority,
+            )
 
         new_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == conflict.new_item_id))
         new_item = new_result.scalar_one_or_none()
