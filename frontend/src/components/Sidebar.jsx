@@ -2,55 +2,84 @@ import React from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, BookOpen, GraduationCap, Shield,
-  BarChart3, Activity, Users, LogOut, Settings
+  BarChart3, Activity, Users, LogOut, LayoutDashboard,
+  AlertTriangle, FileSearch, ClipboardList
 } from 'lucide-react'
 
-export default function Sidebar({ user }) {
+const ROLE_LABELS = {
+  super_admin: 'Суперадмин',
+  admin: 'Администратор',
+  manager: 'Менеджер',
+  employee: 'Сотрудник',
+}
+
+export default function Sidebar({ user, setUser }) {
   const navigate = useNavigate()
-  const isAdmin = user?.role === 'admin'
+  const isAdminOrSuper = ['super_admin', 'admin'].includes(user?.role)
+  const isManagerPlus = ['super_admin', 'admin', 'manager'].includes(user?.role)
+  const isSuperAdmin = user?.role === 'super_admin'
 
   const handleLogout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-    navigate('/login')
+    setUser(null)
+    navigate('/')
   }
 
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
-        <h2>TrueConf AI</h2>
-        <p>{user?.full_name || user?.username} ({user?.role})</p>
+        <h2>Мир Мороженого AI</h2>
+        <p>{user?.full_name || user?.username}</p>
+        <p style={{ fontSize: '0.65rem', color: '#6b7280' }}>{ROLE_LABELS[user?.role] || user?.role}</p>
       </div>
 
-      <div className="sidebar-section">Main</div>
+      <div className="sidebar-section">Основное</div>
       <ul className="sidebar-nav">
-        <li><NavLink to="/chat"><MessageSquare size={18} /> Chat</NavLink></li>
+        {isAdminOrSuper && (
+          <li><NavLink to="/"><LayoutDashboard size={18} /> Панель</NavLink></li>
+        )}
+        <li><NavLink to="/chat"><MessageSquare size={18} /> Чат с ИИ</NavLink></li>
       </ul>
 
-      {isAdmin && (
+      {isAdminOrSuper && (
         <>
-          <div className="sidebar-section">Knowledge Base</div>
+          <div className="sidebar-section">База знаний</div>
           <ul className="sidebar-nav">
-            <li><NavLink to="/knowledge"><BookOpen size={18} /> Documents</NavLink></li>
-            <li><NavLink to="/training"><GraduationCap size={18} /> Training</NavLink></li>
-            <li><NavLink to="/moderation"><Shield size={18} /> Moderation</NavLink></li>
+            <li><NavLink to="/knowledge"><BookOpen size={18} /> Документы</NavLink></li>
+            <li><NavLink to="/training"><GraduationCap size={18} /> Обучение</NavLink></li>
+            <li><NavLink to="/moderation"><Shield size={18} /> Модерация</NavLink></li>
+            <li><NavLink to="/conflicts"><AlertTriangle size={18} /> Конфликты</NavLink></li>
           </ul>
 
-          <div className="sidebar-section">Analytics</div>
+          <div className="sidebar-section">Аналитика</div>
           <ul className="sidebar-nav">
-            <li><NavLink to="/sales"><BarChart3 size={18} /> Sales</NavLink></li>
-            <li><NavLink to="/monitoring"><Activity size={18} /> Monitoring</NavLink></li>
+            <li><NavLink to="/sales"><BarChart3 size={18} /> Продажи</NavLink></li>
+            <li><NavLink to="/chats"><FileSearch size={18} /> История чатов</NavLink></li>
           </ul>
 
-          <div className="sidebar-section">System</div>
+          <div className="sidebar-section">Система</div>
           <ul className="sidebar-nav">
-            <li><NavLink to="/users"><Users size={18} /> Users</NavLink></li>
+            <li><NavLink to="/monitoring"><Activity size={18} /> Мониторинг</NavLink></li>
+            <li><NavLink to="/audit"><ClipboardList size={18} /> Аудит</NavLink></li>
+            {isSuperAdmin && (
+              <li><NavLink to="/users"><Users size={18} /> Пользователи</NavLink></li>
+            )}
+          </ul>
+        </>
+      )}
+
+      {!isAdminOrSuper && isManagerPlus && (
+        <>
+          <div className="sidebar-section">Аналитика</div>
+          <ul className="sidebar-nav">
+            <li><NavLink to="/sales"><BarChart3 size={18} /> Продажи</NavLink></li>
           </ul>
         </>
       )}
 
       <ul className="sidebar-nav" style={{ marginTop: 'auto', borderTop: '1px solid #374151', paddingTop: '1rem' }}>
-        <li><button onClick={handleLogout}><LogOut size={18} /> Logout</button></li>
+        <li><button onClick={handleLogout}><LogOut size={18} /> Выход</button></li>
       </ul>
     </div>
   )

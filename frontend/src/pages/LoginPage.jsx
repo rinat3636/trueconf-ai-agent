@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 
 export default function LoginPage({ onLogin }) {
@@ -7,7 +6,6 @@ export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -19,9 +17,8 @@ export default function LoginPage({ onLogin }) {
       localStorage.setItem('token', data.access_token)
       localStorage.setItem('user', JSON.stringify(data.user))
       onLogin(data.user)
-      navigate('/')
     } catch (err) {
-      setError(err.message || 'Login failed')
+      setError(err.message || 'Ошибка входа')
     } finally {
       setLoading(false)
     }
@@ -30,41 +27,41 @@ export default function LoginPage({ onLogin }) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1>TrueConf AI Agent</h1>
-        <p>Corporate AI assistant login</p>
+        <h1>Мир Мороженого</h1>
+        <p>Корпоративный ИИ-агент</p>
 
         {error && <div className="error-msg">{error}</div>}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Username</label>
+            <label>Логин</label>
             <input
               className="form-control"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username"
+              placeholder="Введите логин"
               required
             />
           </div>
           <div className="form-group">
-            <label>Password</label>
+            <label>Пароль</label>
             <input
               className="form-control"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
+              placeholder="Введите пароль"
               required
             />
           </div>
           <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} disabled={loading}>
-            {loading ? 'Loading...' : 'Login'}
+            {loading ? 'Вход...' : 'Войти'}
           </button>
         </form>
 
-        <p style={{ marginTop: '1.5rem', fontSize: '0.8rem' }}>
-          Default: admin / admin123
+        <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: '#9ca3af' }}>
+          По умолчанию: admin / admin123
         </p>
       </div>
     </div>
