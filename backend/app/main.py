@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -10,9 +11,12 @@ from app.core.database import init_db, async_session
 from app.core.security import get_password_hash
 from app.core.redis import close_redis
 from app.core.qdrant import init_collections
+from app.core.rate_limiter import RateLimitMiddleware
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+_background_tasks = []
 
 
 async def create_default_admin():
@@ -47,7 +51,32 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Qdrant not available: %s", e)
 
+    # Start background scheduler
+    from app.services.scheduler import scheduler_loop
+    scheduler_task = asyncio.create_task(scheduler_loop())
+    _background_tasks.append(scheduler_task)
+
+    # Start TrueConf bot polling (if configured)
+    from app.services.trueconf_bot import trueconf_bot
+    if trueconf_bot.enabled:
+        bot_task = asyncio.create_task(trueconf_bot.start_polling())
+        _background_tasks.append(bot_task)
+        logger.info("TrueConf bot polling started")
+
     yield
+
+    # Shutdown
+    from app.services.scheduler import stop_scheduler
+    from app.services.trueconf_bot import trueconf_bot as bot
+    stop_scheduler()
+    bot.stop_polling()
+
+    for task in _background_tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     await close_redis()
     logger.info("Shutdown complete")
@@ -69,6 +98,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(RateLimitMiddleware)
 
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router

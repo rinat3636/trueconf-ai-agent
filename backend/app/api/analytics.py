@@ -21,7 +21,9 @@ from app.services.analytics_service import (
     get_sales_analytics,
     get_manager_analysis,
     get_client_analysis,
+    get_product_analysis,
     generate_ai_recommendations,
+    generate_full_ai_analysis,
     answer_analytics_question,
 )
 from app.services.document_processor import parse_sales_report
@@ -42,10 +44,22 @@ async def process_sales_report_background(report_id: int, file_path: str):
             if not report:
                 return
 
+            # Insert with parent_id tracking for hierarchy
+            current_rep_id = None
+            current_client_id = None
+
             for record in records:
+                parent_id = None
+                level = record.get("level", "product")
+                if level == "client":
+                    parent_id = current_rep_id
+                elif level == "product":
+                    parent_id = current_client_id
+
                 sales_record = SalesRecord(
                     report_id=report_id,
-                    level=record.get("level", "product"),
+                    level=level,
+                    parent_id=parent_id,
                     name=record.get("name", ""),
                     quantity=record.get("quantity"),
                     tonnage=record.get("tonnage"),
@@ -54,6 +68,13 @@ async def process_sales_report_background(report_id: int, file_path: str):
                     margin_pct=record.get("margin_pct"),
                 )
                 db.add(sales_record)
+                await db.flush()
+
+                if level == "rep":
+                    current_rep_id = sales_record.id
+                    current_client_id = None
+                elif level == "client":
+                    current_client_id = sales_record.id
 
             period = metadata.get("period", "")
             if " - " in period:
@@ -215,6 +236,30 @@ async def get_report_recommendations(
     analytics = await get_sales_analytics(db, report_id)
     recommendations = await generate_ai_recommendations(analytics)
     return {"recommendations": recommendations}
+
+
+@router.get("/reports/{report_id}/products")
+async def get_report_products(
+    report_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_product_analysis(db, report_id)
+
+
+@router.get("/reports/{report_id}/full-analysis")
+async def get_full_ai_analysis(
+    report_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SalesReport).where(SalesReport.id == report_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.status != "processed":
+        raise HTTPException(status_code=400, detail="Report is still processing")
+    return await generate_full_ai_analysis(db, report_id)
 
 
 @router.post("/ask", response_model=AnalysisQuestionResponse)
