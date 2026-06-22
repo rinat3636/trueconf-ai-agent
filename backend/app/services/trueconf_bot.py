@@ -50,7 +50,7 @@ class TrueConfBot:
         if self._access_token and time.time() < self._token_expires_at - 60:
             return self._access_token
 
-        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+        async with httpx.AsyncClient(timeout=5, verify=False) as client:
             try:
                 response = await client.post(
                     f"{self.api_url}/oauth2/token",
@@ -97,7 +97,7 @@ class TrueConfBot:
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
             try:
                 response = await client.request(
                     method,
