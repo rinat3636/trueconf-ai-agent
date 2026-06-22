@@ -25,9 +25,14 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     MAX_UPLOAD_SIZE_MB: int = 50
 
-    TRUECONF_API_URL: str = ""
-    TRUECONF_API_KEY: str = ""
-    TRUECONF_BOT_ID: str = ""
+    TRUECONF_SERVER_URL: str = "https://localhost"
+    TRUECONF_CLIENT_ID: str = ""
+    TRUECONF_CLIENT_SECRET: str = ""
+    TRUECONF_BOT_USER: str = ""
+    TRUECONF_BOT_PASSWORD: str = ""
+    TRUECONF_POLL_INTERVAL: int = 3
+    TRUECONF_ENABLED: bool = False
+    TRUECONF_VERIFY_SSL: bool = False
 
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200

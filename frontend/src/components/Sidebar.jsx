@@ -2,7 +2,7 @@ import React from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, BookOpen, GraduationCap, Shield,
-  BarChart3, Activity, Users, LogOut, Settings
+  BarChart3, Activity, Users, LogOut, Settings, Bot
 } from 'lucide-react'
 
 export default function Sidebar({ user }) {
@@ -45,6 +45,7 @@ export default function Sidebar({ user }) {
           <div className="sidebar-section">System</div>
           <ul className="sidebar-nav">
             <li><NavLink to="/users"><Users size={18} /> Users</NavLink></li>
+            <li><NavLink to="/trueconf"><Bot size={18} /> TrueConf Bot</NavLink></li>
           </ul>
         </>
       )}

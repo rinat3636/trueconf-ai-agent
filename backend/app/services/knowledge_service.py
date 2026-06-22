@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from typing import List, Optional
@@ -8,6 +9,7 @@ from openai import AsyncOpenAI
 from app.core.config import settings
 from app.services.document_processor import extract_text, chunk_text
 
+logger = logging.getLogger("knowledge_service")
 
 client = AsyncOpenAI(
     api_key=settings.AITUNNEL_API_KEY,
@@ -20,8 +22,33 @@ collection = chroma_client.get_or_create_collection(
     metadata={"hnsw:space": "cosine"},
 )
 
+_use_api_embeddings: Optional[bool] = None
 
-async def get_embedding(text: str) -> List[float]:
+
+async def _check_embedding_support() -> bool:
+    """Check if the configured API supports embeddings."""
+    global _use_api_embeddings
+    if _use_api_embeddings is not None:
+        return _use_api_embeddings
+    try:
+        response = await client.embeddings.create(
+            model=settings.LLM_EMBEDDING_MODEL,
+            input="test",
+        )
+        if response.data and len(response.data[0].embedding) > 0:
+            _use_api_embeddings = True
+            logger.info("API embeddings available, using %s", settings.LLM_EMBEDDING_MODEL)
+            return True
+    except Exception as e:
+        logger.info("API embeddings not available (%s), using ChromaDB built-in", e)
+    _use_api_embeddings = False
+    return False
+
+
+async def get_embedding(text: str) -> Optional[List[float]]:
+    """Get embedding from API. Returns None if API embeddings not available."""
+    if not await _check_embedding_support():
+        return None
     response = await client.embeddings.create(
         model=settings.LLM_EMBEDDING_MODEL,
         input=text,
@@ -48,12 +75,14 @@ async def add_document_to_knowledge_base(
         if category:
             metadata["category"] = category
 
-        collection.upsert(
-            ids=[chunk_id],
-            embeddings=[embedding],
-            documents=[chunk],
-            metadatas=[metadata],
-        )
+        upsert_kwargs = {
+            "ids": [chunk_id],
+            "documents": [chunk],
+            "metadatas": [metadata],
+        }
+        if embedding is not None:
+            upsert_kwargs["embeddings"] = [embedding]
+        collection.upsert(**upsert_kwargs)
 
     return len(chunks)
 
@@ -69,12 +98,14 @@ async def add_knowledge_item_to_vector_db(
     if category:
         metadata["category"] = category
 
-    collection.upsert(
-        ids=[item_id],
-        embeddings=[embedding],
-        documents=[content],
-        metadatas=[metadata],
-    )
+    upsert_kwargs = {
+        "ids": [item_id],
+        "documents": [content],
+        "metadatas": [metadata],
+    }
+    if embedding is not None:
+        upsert_kwargs["embeddings"] = [embedding]
+    collection.upsert(**upsert_kwargs)
 
 
 async def add_correction_to_vector_db(
@@ -85,12 +116,14 @@ async def add_correction_to_vector_db(
     combined = f"Вопрос: {question}\nОтвет: {answer}"
     embedding = await get_embedding(combined)
     item_id = f"correction_{correction_id}"
-    collection.upsert(
-        ids=[item_id],
-        embeddings=[embedding],
-        documents=[combined],
-        metadatas={"correction_id": str(correction_id), "source": "correction"},
-    )
+    upsert_kwargs = {
+        "ids": [item_id],
+        "documents": [combined],
+        "metadatas": [{"correction_id": str(correction_id), "source": "correction"}],
+    }
+    if embedding is not None:
+        upsert_kwargs["embeddings"] = [embedding]
+    collection.upsert(**upsert_kwargs)
 
 
 async def search_knowledge(
@@ -104,17 +137,19 @@ async def search_knowledge(
     if category:
         where_filter = {"category": category}
 
+    query_kwargs = {"n_results": n_results}
+    if embedding is not None:
+        query_kwargs["query_embeddings"] = [embedding]
+    else:
+        query_kwargs["query_texts"] = [query]
+    if where_filter:
+        query_kwargs["where"] = where_filter
+
     try:
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=n_results,
-            where=where_filter,
-        )
+        results = collection.query(**query_kwargs)
     except Exception:
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=n_results,
-        )
+        query_kwargs.pop("where", None)
+        results = collection.query(**query_kwargs)
 
     items = []
     if results and results["documents"]:

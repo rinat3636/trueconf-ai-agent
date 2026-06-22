@@ -7,7 +7,8 @@ from app.core.security import get_current_admin
 from app.models.user import User
 from app.models.knowledge import Document, KnowledgeItem
 from app.models.analytics import SalesReport, ChatMessage, ModerationQueue
-from app.schemas.analytics import SystemStats
+from app.schemas.analytics import SystemStats, TrueConfStatus
+from app.services.trueconf_bot import trueconf_bot
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
@@ -56,6 +57,16 @@ async def get_system_stats(
 
     positive_pct = (positive_fb / total_fb * 100) if total_fb > 0 else None
 
+    tc_status = await trueconf_bot.get_status()
+    trueconf_info = TrueConfStatus(
+        enabled=tc_status.get("enabled", False),
+        connected=tc_status.get("connected", False),
+        running=tc_status.get("running", False),
+        server_url=tc_status.get("server_url", ""),
+        bot_user=tc_status.get("bot_user", ""),
+        active_chats=tc_status.get("active_chats", 0),
+    )
+
     return SystemStats(
         total_documents=total_documents,
         total_knowledge_items=total_knowledge,
@@ -65,4 +76,5 @@ async def get_system_stats(
         total_reports=total_reports,
         pending_moderation=pending_moderation,
         positive_feedback_pct=round(positive_pct, 1) if positive_pct is not None else None,
+        trueconf=trueconf_info,
     )

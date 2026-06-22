@@ -9,6 +9,7 @@ import ModerationPage from './pages/ModerationPage'
 import SalesPage from './pages/SalesPage'
 import MonitoringPage from './pages/MonitoringPage'
 import UsersPage from './pages/UsersPage'
+import TrueConfPage from './pages/TrueConfPage'
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/sales" element={isAdmin ? <SalesPage /> : <Navigate to="/chat" />} />
           <Route path="/monitoring" element={isAdmin ? <MonitoringPage /> : <Navigate to="/chat" />} />
           <Route path="/users" element={isAdmin ? <UsersPage /> : <Navigate to="/chat" />} />
+          <Route path="/trueconf" element={isAdmin ? <TrueConfPage /> : <Navigate to="/chat" />} />
           <Route path="*" element={<Navigate to="/chat" />} />
         </Routes>
       </div>

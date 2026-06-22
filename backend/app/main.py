@@ -7,14 +7,17 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.security import get_password_hash
-from app.api import auth, knowledge, chat, analytics, monitoring
+from app.api import auth, knowledge, chat, analytics, monitoring, trueconf
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     await create_default_admin()
+    from app.services.trueconf_bot import trueconf_bot
+    await trueconf_bot.start()
     yield
+    await trueconf_bot.stop()
 
 
 app = FastAPI(
@@ -36,6 +39,7 @@ app.include_router(knowledge.router)
 app.include_router(chat.router)
 app.include_router(analytics.router)
 app.include_router(monitoring.router)
+app.include_router(trueconf.router)
 
 
 async def create_default_admin():

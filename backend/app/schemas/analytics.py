@@ -66,6 +66,15 @@ class AnalysisQuestionResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
+class TrueConfStatus(BaseModel):
+    enabled: bool = False
+    connected: bool = False
+    running: bool = False
+    server_url: str = ""
+    bot_user: str = ""
+    active_chats: int = 0
+
+
 class SystemStats(BaseModel):
     total_documents: int
     total_knowledge_items: int
@@ -75,3 +84,4 @@ class SystemStats(BaseModel):
     total_reports: int
     pending_moderation: int
     positive_feedback_pct: Optional[float]
+    trueconf: Optional[TrueConfStatus] = None
