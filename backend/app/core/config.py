@@ -4,33 +4,46 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     APP_NAME: str = "TrueConf AI Agent"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    APP_VERSION: str = "2.0.0"
+    DEBUG: bool = False
 
-    DATABASE_URL: str = "sqlite+aiosqlite:///./data/app.db"
+    # Database (MySQL)
+    DATABASE_URL: str = "mysql+aiomysql://trueconf:trueconf_db_pass@localhost:3306/trueconf_agent"
 
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Qdrant
+    QDRANT_URL: str = "http://localhost:6333"
+
+    # JWT
     SECRET_KEY: str = "change-me-in-production-use-strong-secret-key"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    AITUNNEL_API_KEY: str = ""
-    AITUNNEL_BASE_URL: str = "https://api.aitunnel.ru/v1"
-
-    LLM_CHAT_MODEL: str = "gpt-4.1-mini"
-    LLM_ANALYSIS_MODEL: str = "gpt-4.1-mini"
+    # LLM
+    GROQ_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    LLM_PROVIDER: str = "groq"  # "groq" or "openai"
+    LLM_CHAT_MODEL: str = "llama-3.3-70b-versatile"
     LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
-    CHROMA_PERSIST_DIR: str = "./data/chroma"
-
-    UPLOAD_DIR: str = "./uploads"
-    MAX_UPLOAD_SIZE_MB: int = 50
-
+    # TrueConf
     TRUECONF_API_URL: str = ""
     TRUECONF_API_KEY: str = ""
     TRUECONF_BOT_ID: str = ""
 
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 200
+    # Upload
+    UPLOAD_DIR: str = "./uploads"
+    MAX_UPLOAD_SIZE_MB: int = 50
+
+    # RAG
+    RAG_TOP_K: int = 10
+    RAG_SCORE_THRESHOLD: float = 0.35
+    CHUNK_SIZE: int = 800
+    CHUNK_OVERLAP: int = 100
+    MAX_CONTEXT_TOKENS: int = 8000
 
     class Config:
         env_file = ".env"
@@ -40,10 +53,8 @@ class Settings(BaseSettings):
 settings = Settings()
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = BASE_DIR / "data"
-UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR = Path(settings.UPLOAD_DIR) if Path(settings.UPLOAD_DIR).is_absolute() else BASE_DIR / settings.UPLOAD_DIR
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "documents").mkdir(exist_ok=True)
 (UPLOAD_DIR / "reports").mkdir(exist_ok=True)

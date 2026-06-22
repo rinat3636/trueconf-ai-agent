@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Send, ThumbsUp, ThumbsDown, FileText } from 'lucide-react'
 import { api } from '../services/api'
 
 export default function ChatPage() {
@@ -29,35 +29,48 @@ export default function ChatPage() {
         role: 'assistant',
         content: data.answer,
         sources: data.sources,
-        id: Date.now() + 1,
+        rules_applied: data.rules_applied,
+        confidence: data.confidence,
+        message_id: data.message_id,
+        id: data.message_id || Date.now() + 1,
       }
       setMessages(prev => [...prev, assistantMsg])
     } catch (err) {
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: `Error: ${err.message}`, id: Date.now() + 1 },
+        { role: 'assistant', content: `Ошибка: ${err.message}`, id: Date.now() + 1 },
       ])
     } finally {
       setLoading(false)
     }
   }
 
-  const handleFeedback = async (messageId, feedback) => {
+  const handleFeedback = async (msg, feedback) => {
     try {
-      await api.submitFeedback({ message_id: messageId, feedback })
+      await api.submitFeedback({ message_id: msg.message_id || msg.id, feedback })
       setMessages(prev =>
-        prev.map(m => (m.id === messageId ? { ...m, feedback } : m))
+        prev.map(m => (m.id === msg.id ? { ...m, feedback } : m))
       )
     } catch (err) {
-      // ignore feedback errors
+      // ignore
     }
+  }
+
+  const startNewSession = () => {
+    setMessages([])
+    setSessionId(null)
   }
 
   return (
     <div>
-      <div className="page-header">
-        <h1>AI Chat</h1>
-        <p>Ask questions about the knowledge base or request analytics</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1>Чат с ИИ</h1>
+          <p>Задавайте вопросы по базе знаний и аналитике</p>
+        </div>
+        {sessionId && (
+          <button className="btn btn-outline" onClick={startNewSession}>Новый диалог</button>
+        )}
       </div>
 
       <div className="chat-container">
@@ -65,10 +78,10 @@ export default function ChatPage() {
           {messages.length === 0 && (
             <div className="empty-state">
               <MessageIcon />
-              <p>Ask any question to the AI assistant</p>
+              <p>Задайте вопрос ИИ-ассистенту</p>
               <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: '#9ca3af' }}>
-                Examples: "What ice cream products do we have?", "Show sales analytics",
-                "Who are top managers?"
+                Примеры: «Какие продукты есть в каталоге?», «Покажи аналитику продаж»,
+                «Кто лучшие ТП?»
               </p>
             </div>
           )}
@@ -79,22 +92,33 @@ export default function ChatPage() {
                 <div className="chat-bubble">{msg.content}</div>
                 {msg.sources && msg.sources.length > 0 && (
                   <div className="chat-sources">
-                    Sources: {msg.sources.join(', ')}
+                    <FileText size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                    Источники: {msg.sources.join(', ')}
+                  </div>
+                )}
+                {msg.rules_applied && msg.rules_applied.length > 0 && (
+                  <div className="chat-sources">
+                    Правила: {msg.rules_applied.join(', ')}
+                  </div>
+                )}
+                {msg.confidence != null && msg.confidence > 0 && (
+                  <div className="chat-sources">
+                    Уверенность: {(msg.confidence * 100).toFixed(0)}%
                   </div>
                 )}
                 {msg.role === 'assistant' && !msg.feedback && (
                   <div className="chat-feedback">
-                    <button onClick={() => handleFeedback(msg.id, 'useful')} title="Useful">
+                    <button onClick={() => handleFeedback(msg, 'useful')} title="Полезно">
                       <ThumbsUp size={14} />
                     </button>
-                    <button onClick={() => handleFeedback(msg.id, 'not_useful')} title="Not useful">
+                    <button onClick={() => handleFeedback(msg, 'not_useful')} title="Не полезно">
                       <ThumbsDown size={14} />
                     </button>
                   </div>
                 )}
                 {msg.feedback && (
                   <div className="chat-sources">
-                    Feedback: {msg.feedback === 'useful' ? 'Useful' : 'Not useful'}
+                    {msg.feedback === 'useful' ? 'Полезно' : 'Не полезно'}
                   </div>
                 )}
               </div>
@@ -106,7 +130,7 @@ export default function ChatPage() {
               <div className="chat-bubble">
                 <div className="loading" style={{ padding: '0.25rem' }}>
                   <div className="spinner" style={{ width: '1rem', height: '1rem' }} />
-                  Thinking...
+                  Думаю...
                 </div>
               </div>
             </div>
@@ -120,7 +144,7 @@ export default function ChatPage() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your question..."
+            placeholder="Введите ваш вопрос..."
             disabled={loading}
           />
           <button type="submit" disabled={loading || !input.trim()}>
