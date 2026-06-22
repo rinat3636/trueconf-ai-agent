@@ -1,6 +1,7 @@
 import os
 import uuid
 import hashlib
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
@@ -24,6 +25,8 @@ from app.schemas.knowledge import (
     ModerationItemResponse, ModerationAction,
     ConflictResponse, ConflictResolve,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
