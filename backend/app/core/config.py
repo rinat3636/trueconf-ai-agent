@@ -26,8 +26,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
-    LLM_PROVIDER: str = "groq"  # "groq" or "openai"
-    LLM_CHAT_MODEL: str = "llama-3.3-70b-versatile"
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_BASE_URL: str = "https://api.cheat-ai.shop/v1"
+    LLM_PROVIDER: str = "anthropic"  # "anthropic", "groq", "google", "openai"
+    LLM_CHAT_MODEL: str = "claude-sonnet-4-20250514"
     LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # TrueConf

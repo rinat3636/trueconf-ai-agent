@@ -287,6 +287,8 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
                         sales_context += "\nЗависимость от SKU:\n"
                         for dep in product_data["sku_dependencies"]:
                             sales_context += f"  {dep['name']}: {dep['revenue_share_pct']:.1f}% выручки (риск: {dep['risk']})\n"
+                    if len(sales_context) > 4000:
+                        sales_context = sales_context[:4000]
                     trace["pipeline"]["sales_data"] = {"loaded": True, "report_id": report.id}
         except Exception as e:
             logger.warning("Failed to load sales data: %s", e)

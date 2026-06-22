@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Optional
 
+import httpx
 from openai import AsyncOpenAI
 
 from app.core.config import settings
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 _groq_client: Optional[AsyncOpenAI] = None
 _openai_client: Optional[AsyncOpenAI] = None
 _google_client: Optional[AsyncOpenAI] = None
+_httpx_client: Optional[httpx.AsyncClient] = None
 
 
 def get_groq_client() -> Optional[AsyncOpenAI]:
@@ -40,6 +42,45 @@ def get_google_client() -> Optional[AsyncOpenAI]:
     return _google_client
 
 
+def get_httpx_client() -> httpx.AsyncClient:
+    global _httpx_client
+    if _httpx_client is None:
+        _httpx_client = httpx.AsyncClient(timeout=60)
+    return _httpx_client
+
+
+async def _anthropic_chat(
+    messages: list[dict],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+) -> Optional[str]:
+    if not settings.ANTHROPIC_API_KEY:
+        return None
+    client = get_httpx_client()
+    url = f"{settings.ANTHROPIC_BASE_URL}/chat/completions"
+    try:
+        resp = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {settings.ANTHROPIC_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.warning("Anthropic httpx failed: %s", e)
+        raise
+
+
 async def chat_completion(
     messages: list[dict],
     model: Optional[str] = None,
@@ -50,7 +91,18 @@ async def chat_completion(
     max_retries = 3
     last_error = None
 
-    # Primary: Google Gemini
+    # Primary: Anthropic (Claude via Tessera proxy, httpx)
+    if settings.ANTHROPIC_API_KEY:
+        try:
+            claude_model = settings.LLM_CHAT_MODEL if "claude" in settings.LLM_CHAT_MODEL else "claude-sonnet-4-20250514"
+            result = await _anthropic_chat(messages, claude_model, temperature, max_tokens)
+            if result:
+                return result
+        except Exception as e:
+            last_error = e
+            logger.warning("Anthropic failed, trying fallback: %s", e)
+
+    # Fallback 1: Google Gemini
     google_client = get_google_client()
     if google_client:
         for attempt in range(max_retries):
@@ -73,15 +125,16 @@ async def chat_completion(
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.warning("Google Gemini failed, trying fallback: %s", e)
+                    logger.warning("Google Gemini failed: %s", e)
                     break
 
-    # Fallback 1: Groq
+    # Fallback 2: Groq
     groq_client = get_groq_client()
     if groq_client:
         try:
+            groq_model = model if "llama" in (model or "") else "llama-3.3-70b-versatile"
             response = await groq_client.chat.completions.create(
-                model=model,
+                model=groq_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -90,7 +143,7 @@ async def chat_completion(
         except Exception as e:
             logger.warning("Groq failed: %s", e)
 
-    # Fallback 2: OpenAI
+    # Fallback 3: OpenAI
     client = get_openai_client()
     if client:
         try:
@@ -109,7 +162,7 @@ async def chat_completion(
             "Превышен лимит запросов к ИИ (Groq rate limit). "
             "Попробуйте через несколько минут."
         )
-    raise RuntimeError("No LLM provider configured. Set GROQ_API_KEY, GOOGLE_API_KEY or OPENAI_API_KEY.")
+    raise RuntimeError("No LLM provider configured. Set ANTHROPIC_API_KEY, GROQ_API_KEY, GOOGLE_API_KEY or OPENAI_API_KEY.")
 
 
 async def get_embedding(text: str) -> list[float]:
