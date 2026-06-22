@@ -19,6 +19,7 @@ class Document(Base):
     error_message = Column(Text, nullable=True)
     chunk_count = Column(Integer, default=0)
     description = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
     metadata_json = Column(JSON, default=dict)
     checksum_sha256 = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

@@ -26,9 +26,13 @@ class DocumentResponse(BaseModel):
     file_size: int
     category: str
     description: Optional[str]
+    summary: Optional[str] = None
     status: str
     chunk_count: int
+    error_message: Optional[str] = None
+    checksum_sha256: Optional[str] = None
     created_at: datetime
+    processed_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -96,6 +100,7 @@ class AnswerCorrectionCreate(BaseModel):
     original_question: str
     original_answer: str
     corrected_answer: str
+    correction_type: str = "answer_fix"  # answer_fix, new_knowledge, new_rule, knowledge_update
     notes: Optional[str] = None
 
 
