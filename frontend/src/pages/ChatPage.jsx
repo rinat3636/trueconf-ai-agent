@@ -93,12 +93,12 @@ export default function ChatPage() {
                 {msg.sources && msg.sources.length > 0 && (
                   <div className="chat-sources">
                     <FileText size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                    Источники: {msg.sources.join(', ')}
+                    Источники: {msg.sources.map(s => s.document_title || s.title || 'База знаний').join(', ')}
                   </div>
                 )}
                 {msg.rules_applied && msg.rules_applied.length > 0 && (
                   <div className="chat-sources">
-                    Правила: {msg.rules_applied.join(', ')}
+                    Правила: {msg.rules_applied.map(r => r.title || r.rule_type || r).join(', ')}
                   </div>
                 )}
                 {msg.confidence != null && msg.confidence > 0 && (
