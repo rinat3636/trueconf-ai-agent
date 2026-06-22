@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _groq_client: Optional[AsyncOpenAI] = None
 _openai_client: Optional[AsyncOpenAI] = None
 _google_client: Optional[AsyncOpenAI] = None
+_embedding_client: Optional[AsyncOpenAI] = None
 _httpx_client: Optional[httpx.AsyncClient] = None
 
 
@@ -30,6 +31,20 @@ def get_openai_client() -> Optional[AsyncOpenAI]:
     if _openai_client is None and settings.OPENAI_API_KEY:
         _openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     return _openai_client
+
+
+def get_embedding_client() -> Optional[AsyncOpenAI]:
+    """Get client for embeddings. Uses OPENAI_API_KEY if set, otherwise falls back to ANTHROPIC proxy."""
+    global _embedding_client
+    if _embedding_client is None:
+        if settings.OPENAI_API_KEY:
+            _embedding_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        elif settings.ANTHROPIC_API_KEY and settings.ANTHROPIC_BASE_URL:
+            _embedding_client = AsyncOpenAI(
+                api_key=settings.ANTHROPIC_API_KEY,
+                base_url=settings.ANTHROPIC_BASE_URL,
+            )
+    return _embedding_client
 
 
 def get_google_client() -> Optional[AsyncOpenAI]:
@@ -165,17 +180,32 @@ async def chat_completion(
     raise RuntimeError("No LLM provider configured. Set ANTHROPIC_API_KEY, GROQ_API_KEY, GOOGLE_API_KEY or OPENAI_API_KEY.")
 
 
+_fastembed_model = None
+
+
+def _get_fastembed_model():
+    global _fastembed_model
+    if _fastembed_model is None:
+        from fastembed import TextEmbedding
+        _fastembed_model = TextEmbedding("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    return _fastembed_model
+
+
 async def get_embedding(text: str) -> list[float]:
-    client = get_openai_client()
-    if not client:
-        raise RuntimeError("OpenAI API key required for embeddings. Set OPENAI_API_KEY.")
+    """Generate embedding using local fastembed model (no external API needed)."""
+    import asyncio
 
     text = text.replace("\n", " ").strip()
     if len(text) > 8000:
         text = text[:8000]
 
-    response = await client.embeddings.create(
-        model=settings.LLM_EMBEDDING_MODEL,
-        input=text,
-    )
-    return response.data[0].embedding
+    try:
+        model = _get_fastembed_model()
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(
+            None, lambda: list(model.embed([text]))
+        )
+        return embeddings[0].tolist()
+    except Exception as e:
+        logger.warning("Local embedding generation failed: %s", e)
+        raise RuntimeError(f"Embedding generation failed: {e}")
