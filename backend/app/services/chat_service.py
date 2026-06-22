@@ -135,7 +135,11 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
         return result
 
     # --- STEP 2b: Vector Correction Check (Qdrant, cosine > 0.92) ---
-    vector_correction = await search_corrections(question, score_threshold=0.92)
+    try:
+        vector_correction = await search_corrections(question, score_threshold=0.92)
+    except RuntimeError as e:
+        logger.warning("Embeddings unavailable, skipping vector correction check: %s", e)
+        vector_correction = None
     trace["pipeline"]["correction_check"] = {
         "checked": True,
         "best_match_score": vector_correction["score"] if vector_correction else None,
@@ -182,12 +186,16 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
 
     # --- STEP 4: Vector Search ---
     search_start = time.time()
-    context_items = await search_knowledge(
-        question,
-        n_results=settings.RAG_TOP_K,
-        categories=intent.get("categories"),
-        score_threshold=settings.RAG_SCORE_THRESHOLD,
-    )
+    try:
+        context_items = await search_knowledge(
+            question,
+            n_results=settings.RAG_TOP_K,
+            categories=intent.get("categories"),
+            score_threshold=settings.RAG_SCORE_THRESHOLD,
+        )
+    except RuntimeError as e:
+        logger.warning("Embeddings unavailable, skipping RAG search: %s", e)
+        context_items = []
     search_time = int((time.time() - search_start) * 1000)
 
     trace["pipeline"]["rag_search"] = {
