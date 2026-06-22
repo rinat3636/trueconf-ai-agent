@@ -122,14 +122,56 @@ def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> L
     return chunks
 
 
+def _get_row_outline_levels_xls(file_path: str) -> dict:
+    """Read XLS row outline levels using xlrd (formatting_info)."""
+    import xlrd
+
+    levels = {}
+    try:
+        wb = xlrd.open_workbook(file_path, formatting_info=True)
+        sheet = wb.sheet_by_index(0)
+        for row_idx in range(sheet.nrows):
+            ri = sheet.rowinfo_map.get(row_idx)
+            if ri:
+                levels[row_idx] = ri.outline_level
+    except Exception:
+        pass
+    return levels
+
+
+def _get_row_outline_levels_xlsx(file_path: str) -> dict:
+    """Read XLSX row outline levels using openpyxl."""
+    import openpyxl
+
+    levels = {}
+    try:
+        wb = openpyxl.load_workbook(file_path, read_only=False, data_only=True)
+        ws = wb.active
+        for row_idx, rd in ws.row_dimensions.items():
+            levels[row_idx - 1] = rd.outline_level
+        wb.close()
+    except Exception:
+        pass
+    return levels
+
+
 def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
     ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".xls":
+        outline_levels = _get_row_outline_levels_xls(file_path)
+    elif ext == ".xlsx":
+        outline_levels = _get_row_outline_levels_xlsx(file_path)
+    else:
+        outline_levels = {}
 
     try:
         if ext == ".xls":
             df = pd.read_excel(file_path, engine="xlrd", header=None)
-        else:
+        elif ext == ".xlsx":
             df = pd.read_excel(file_path, engine="openpyxl", header=None)
+        else:
+            df = pd.read_csv(file_path, header=None)
     except Exception:
         df = pd.read_csv(file_path, header=None)
 
@@ -140,9 +182,6 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
         values = [v for v in row.values if pd.notna(v)]
         if not values:
             continue
-
-        first_val = str(values[0]).strip() if values else ""
-
         if "Период:" in str(row.values):
             for v in row.values:
                 if pd.notna(v) and "Период:" in str(v):
@@ -159,15 +198,21 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
     if header_row is None:
         return records, metadata
 
+    has_outline = bool(outline_levels)
+
     current_manager = None
     current_client = None
 
-    for idx in range(header_row + 3, len(df)):
+    for idx in range(header_row + 1, len(df)):
         row = df.iloc[idx]
-        values = [v for v in row.values]
+        values = list(row.values)
 
         name_val = str(values[1]).strip() if len(values) > 1 and pd.notna(values[1]) else ""
         if not name_val:
+            continue
+
+        is_total = "итого" in name_val.lower() or name_val.lower() == "итог"
+        if is_total:
             continue
 
         nums = []
@@ -190,49 +235,76 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
         profit = nums[3] if len(nums) > 3 else None
         margin = nums[4] if len(nums) > 4 else None
 
-        is_total = "итого" in name_val.lower()
-        if is_total:
-            continue
-
-        if revenue and revenue > 100000 and quantity and quantity > 100:
-            current_manager = name_val
-            current_client = None
-            records.append({
-                "manager_name": current_manager,
-                "client_name": None,
-                "product_name": None,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "manager",
-            })
-        elif current_manager and revenue and revenue > 10000 and quantity and quantity > 10:
-            current_client = name_val
-            records.append({
-                "manager_name": current_manager,
-                "client_name": current_client,
-                "product_name": None,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "client",
-            })
-        elif current_manager and current_client:
-            records.append({
-                "manager_name": current_manager,
-                "client_name": current_client,
-                "product_name": name_val,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "product",
-            })
+        if has_outline:
+            level = outline_levels.get(idx, 0)
+            if level == 0:
+                current_manager = name_val
+                current_client = None
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": None,
+                    "product_name": None,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "manager",
+                })
+            elif level == 1:
+                current_client = name_val
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": current_client,
+                    "product_name": None,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "client",
+                })
+            elif level >= 2 and current_manager and current_client:
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": current_client,
+                    "product_name": name_val,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "product",
+                })
+        else:
+            # Fallback for CSV or files without outline levels.
+            # Use first data row as manager, subsequent rows as products.
+            if current_manager is None:
+                current_manager = name_val
+                current_client = None
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": None,
+                    "product_name": None,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "product",
+                })
+            else:
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": current_client,
+                    "product_name": name_val,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "product",
+                })
 
     if records:
         manager_records = [r for r in records if r["record_level"] == "manager"]

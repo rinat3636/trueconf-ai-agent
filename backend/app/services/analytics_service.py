@@ -254,37 +254,62 @@ async def answer_analytics_question(
     return response.choices[0].message.content
 
 
+def _safe_fmt(value, fmt_str=":,.0f"):
+    if value is None:
+        return "н/д"
+    try:
+        return format(value, fmt_str.lstrip(":"))
+    except (ValueError, TypeError):
+        return str(value)
+
+
 def _format_analytics_for_ai(analytics: Dict[str, Any]) -> str:
     lines = []
-    lines.append(f"Общая выручка: {analytics.get('total_revenue', 0):,.0f} руб.")
-    lines.append(f"Общая прибыль: {analytics.get('total_profit', 0):,.0f} руб.")
-    lines.append(f"Средняя маржинальность: {analytics.get('avg_margin', 0):.1f}%")
+    lines.append(f"Общая выручка: {_safe_fmt(analytics.get('total_revenue', 0))} руб.")
+    lines.append(f"Общая прибыль: {_safe_fmt(analytics.get('total_profit', 0))} руб.")
+    lines.append(f"Средняя маржинальность: {_safe_fmt(analytics.get('avg_margin', 0), ':.1f')}%")
     lines.append(f"Менеджеров: {analytics.get('manager_count', 0)}")
     lines.append(f"Клиентов: {analytics.get('client_count', 0)}")
     lines.append(f"SKU: {analytics.get('product_count', 0)}")
 
     if analytics.get("top_managers"):
         lines.append("\nТОП менеджеров по прибыли:")
-        for m in analytics["top_managers"][:5]:
+        for m in analytics["top_managers"]:
             lines.append(
-                f"  {m['name']}: выручка {m['revenue']:,.0f}, "
-                f"прибыль {m['profit']:,.0f}, маржа {m['margin']:.1f}%"
+                f"  {m['name']}: выручка {_safe_fmt(m.get('revenue'))}, "
+                f"прибыль {_safe_fmt(m.get('profit'))}, маржа {_safe_fmt(m.get('margin'), ':.1f')}%"
             )
 
     if analytics.get("weak_managers"):
         lines.append("\nМенеджеры с низкой маржинальностью:")
-        for m in analytics["weak_managers"][:5]:
+        for m in analytics["weak_managers"]:
             lines.append(
-                f"  {m['name']}: маржа {m['margin']:.1f}%, "
-                f"прибыль {m['profit']:,.0f}"
+                f"  {m['name']}: маржа {_safe_fmt(m.get('margin'), ':.1f')}%, "
+                f"прибыль {_safe_fmt(m.get('profit'))}"
             )
 
     if analytics.get("top_clients"):
         lines.append("\nТОП клиентов по прибыли:")
-        for c in analytics["top_clients"][:5]:
+        for c in analytics["top_clients"]:
             lines.append(
-                f"  {c['name']} ({c['manager']}): "
-                f"прибыль {c['profit']:,.0f}, маржа {c['margin']:.1f}%"
+                f"  {c['name']} ({c.get('manager', 'н/д')}): "
+                f"прибыль {_safe_fmt(c.get('profit'))}, маржа {_safe_fmt(c.get('margin'), ':.1f')}%"
+            )
+
+    if analytics.get("declining_clients"):
+        lines.append("\nКлиенты с низкой маржинальностью:")
+        for c in analytics["declining_clients"]:
+            lines.append(
+                f"  {c['name']} ({c.get('manager', 'н/д')}): "
+                f"маржа {_safe_fmt(c.get('margin'), ':.1f')}%, прибыль {_safe_fmt(c.get('profit'))}"
+            )
+
+    if analytics.get("top_products"):
+        lines.append("\nТОП товаров по прибыли:")
+        for p in analytics["top_products"]:
+            lines.append(
+                f"  {p['name']}: "
+                f"прибыль {_safe_fmt(p.get('profit'))}, маржа {_safe_fmt(p.get('margin'), ':.1f')}%"
             )
 
     return "\n".join(lines)
