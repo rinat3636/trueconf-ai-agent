@@ -405,29 +405,33 @@ async def answer_analytics_question(
     )
 
 
+def _safe_num(val, default=0):
+    return val if val is not None else default
+
+
 def _format_analytics_for_ai(analytics: Dict[str, Any]) -> str:
     lines = []
-    lines.append(f"Общая выручка: {analytics.get('total_revenue', 0):,.0f} руб.")
-    lines.append(f"Общая прибыль: {analytics.get('total_profit', 0):,.0f} руб.")
-    lines.append(f"Средняя маржинальность: {analytics.get('avg_margin', 0):.1f}%")
-    lines.append(f"Менеджеров (ТП): {analytics.get('manager_count', 0)}")
-    lines.append(f"Клиентов: {analytics.get('client_count', 0)}")
-    lines.append(f"SKU: {analytics.get('product_count', 0)}")
+    lines.append(f"Общая выручка: {_safe_num(analytics.get('total_revenue')):,.0f} руб.")
+    lines.append(f"Общая прибыль: {_safe_num(analytics.get('total_profit')):,.0f} руб.")
+    lines.append(f"Средняя маржинальность: {_safe_num(analytics.get('avg_margin')):.1f}%")
+    lines.append(f"Менеджеров (ТП): {_safe_num(analytics.get('manager_count'))}")
+    lines.append(f"Клиентов: {_safe_num(analytics.get('client_count'))}")
+    lines.append(f"SKU: {_safe_num(analytics.get('product_count'))}")
 
     if analytics.get("top_managers"):
         lines.append("\nТОП менеджеров по прибыли:")
         for m in analytics["top_managers"][:5]:
             lines.append(
-                f"  {m['name']}: выручка {m.get('revenue', 0):,.0f}, "
-                f"прибыль {m.get('profit', 0):,.0f}, маржа {m.get('margin', 0):.1f}%"
+                f"  {m['name']}: выручка {_safe_num(m.get('revenue')):,.0f}, "
+                f"прибыль {_safe_num(m.get('profit')):,.0f}, маржа {_safe_num(m.get('margin')):.1f}%"
             )
 
     if analytics.get("weak_managers"):
         lines.append("\nМенеджеры с низкой маржинальностью:")
         for m in analytics["weak_managers"][:5]:
             lines.append(
-                f"  {m['name']}: маржа {m.get('margin', 0):.1f}%, "
-                f"прибыль {m.get('profit', 0):,.0f}"
+                f"  {m['name']}: маржа {_safe_num(m.get('margin')):.1f}%, "
+                f"прибыль {_safe_num(m.get('profit')):,.0f}"
             )
 
     if analytics.get("top_clients"):
@@ -435,15 +439,15 @@ def _format_analytics_for_ai(analytics: Dict[str, Any]) -> str:
         for c in analytics["top_clients"][:5]:
             lines.append(
                 f"  {c['name']}: "
-                f"прибыль {c.get('profit', 0):,.0f}, маржа {c.get('margin', 0):.1f}%"
+                f"прибыль {_safe_num(c.get('profit')):,.0f}, маржа {_safe_num(c.get('margin')):.1f}%"
             )
 
     if analytics.get("declining_clients"):
         lines.append("\nКлиенты с низкой маржинальностью:")
         for c in analytics["declining_clients"][:5]:
             lines.append(
-                f"  {c['name']}: маржа {c.get('margin', 0):.1f}%, "
-                f"прибыль {c.get('profit', 0):,.0f}"
+                f"  {c['name']}: маржа {_safe_num(c.get('margin')):.1f}%, "
+                f"прибыль {_safe_num(c.get('profit')):,.0f}"
             )
 
     return "\n".join(lines)

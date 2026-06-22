@@ -411,6 +411,30 @@ def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> L
 # Sales report parsing
 # ---------------------------------------------------------------------------
 
+# Patterns for hierarchy detection in 1C sales reports
+_FIO_PATTERN = re.compile(r'^[А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+$')
+_PRODUCT_PATTERN = re.compile(
+    r'(\d+\s*г[р.]?\s*[*×xх]\s*\d+'  # weight*pack: 60г*40
+    r'|\d+\s*г\b'                      # weight: 60г
+    r'|\(\s*[А-Яа-яA-Za-z]-?\d+\s*\)' # article: (А-7/1)
+    r'|\d+\s*[мМ][лЛ]'                # ml: 100мл
+    r'|\bшт\.?\b'                      # шт
+    r'|Сибхолод|Айс-Групп|Айс-Гр\b|Русс\.?\s*холод|МТ-холод'  # manufacturers
+    r'|\bАГ\b'                         # АГ = Айс-Групп abbreviation
+    r'|Стак\.|Рожок|Эскимо|Трубочк|Торт|Вафл|Брикет|Пакет|Фруктов'  # product types
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _is_manager_name(name: str) -> bool:
+    return bool(_FIO_PATTERN.match(name))
+
+
+def _is_product_name(name: str) -> bool:
+    return bool(_PRODUCT_PATTERN.search(name))
+
+
 def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -481,7 +505,7 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
         if is_total:
             continue
 
-        if revenue and revenue > 100000 and quantity and quantity > 100:
+        if _is_manager_name(name_val):
             current_manager = name_val
             current_client = None
             records.append({
@@ -495,7 +519,21 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
                 "margin_pct": margin,
                 "record_level": "manager",
             })
-        elif current_manager and revenue and revenue > 10000 and quantity and quantity > 10:
+        elif current_manager and _is_product_name(name_val):
+            if not current_client:
+                current_client = "(без клиента)"
+            records.append({
+                "manager_name": current_manager,
+                "client_name": current_client,
+                "product_name": name_val,
+                "quantity": quantity,
+                "tonnage": tonnage,
+                "revenue": revenue,
+                "profit": profit,
+                "margin_pct": margin,
+                "record_level": "product",
+            })
+        elif current_manager:
             current_client = name_val
             records.append({
                 "manager_name": current_manager,
@@ -507,18 +545,6 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
                 "profit": profit,
                 "margin_pct": margin,
                 "record_level": "client",
-            })
-        elif current_manager and current_client:
-            records.append({
-                "manager_name": current_manager,
-                "client_name": current_client,
-                "product_name": name_val,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "product",
             })
 
     if records:

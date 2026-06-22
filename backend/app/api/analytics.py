@@ -48,19 +48,32 @@ async def process_sales_report_background(report_id: int, file_path: str):
             current_rep_id = None
             current_client_id = None
 
+            level_map = {"manager": "rep", "client": "client", "product": "product"}
+
             for record in records:
                 parent_id = None
-                level = record.get("level", "product")
+                raw_level = record.get("record_level", "product")
+                level = level_map.get(raw_level, raw_level)
+
                 if level == "client":
                     parent_id = current_rep_id
                 elif level == "product":
                     parent_id = current_client_id
 
+                if level == "rep":
+                    name = record.get("manager_name") or record.get("name", "")
+                elif level == "client":
+                    name = record.get("client_name") or record.get("name", "")
+                elif level == "product":
+                    name = record.get("product_name") or record.get("name", "")
+                else:
+                    name = record.get("name", "")
+
                 sales_record = SalesRecord(
                     report_id=report_id,
                     level=level,
                     parent_id=parent_id,
-                    name=record.get("name", ""),
+                    name=name,
                     quantity=record.get("quantity"),
                     tonnage=record.get("tonnage"),
                     revenue=record.get("revenue"),
@@ -186,6 +199,15 @@ async def delete_report(
     if os.path.exists(report.file_path):
         os.remove(report.file_path)
 
+    from sqlalchemy import update, delete as sql_delete
+    await db.execute(
+        update(SalesRecord)
+        .where(SalesRecord.report_id == report_id)
+        .values(parent_id=None)
+    )
+    await db.execute(
+        sql_delete(SalesRecord).where(SalesRecord.report_id == report_id)
+    )
     await db.delete(report)
     await log_action(
         db, "delete_report", user_id=current_user.id,
