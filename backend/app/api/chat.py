@@ -43,8 +43,22 @@ async def ask_question(
     db.add(user_msg)
     await db.flush()
 
+    # Load chat history for context
+    history_result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session.id)
+        .where(ChatMessage.id != user_msg.id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(20)
+    )
+    history_msgs = list(reversed(history_result.scalars().all()))
+    chat_history = [
+        {"role": m.role, "content": m.content}
+        for m in history_msgs
+    ]
+
     try:
-        answer_data = await generate_answer(request.message, db)
+        answer_data = await generate_answer(request.message, db, chat_history=chat_history)
     except RuntimeError as e:
         error_msg = str(e)
         if "rate_limit" in error_msg.lower() or "лимит" in error_msg.lower():

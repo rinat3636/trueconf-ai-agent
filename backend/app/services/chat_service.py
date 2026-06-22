@@ -87,7 +87,7 @@ async def find_exact_correction(db: AsyncSession, question: str) -> Optional[Dic
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
+async def generate_answer(question: str, db: AsyncSession, chat_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     start_time = time.time()
 
     trace = {
@@ -330,6 +330,10 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
     system_prompt = _build_system_prompt(rules_data, has_sales_data=bool(sales_context))
     messages = [{"role": "system", "content": system_prompt}]
 
+    if chat_history:
+        for msg in chat_history[-10:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
     if context_text:
         messages.append({
             "role": "user",
@@ -415,6 +419,11 @@ def _build_system_prompt(rules: List[Dict[str, Any]], has_sales_data: bool = Fal
         "Попробуйте спросить о продажах, ТП, клиентах или продуктах.»\n"
         "4. Отвечай на русском языке. Будь точен, конкретен, приводи цифры.\n"
         "5. Не упоминай источники в тексте ответа — они отображаются отдельно.\n"
+        "6. ФОРМАТ ОТВЕТА: пиши ТОЛЬКО простым текстом. ЗАПРЕЩЕНО использовать "
+        "markdown-разметку: никаких **, ##, |таблиц|, ```блоков кода```, "
+        "списков с -, *. Используй обычный текст, нумерацию цифрами (1. 2. 3.), "
+        "переносы строк для структуры. Числа форматируй с пробелами (1 000 000).\n"
+        "7. Поддерживай контекст диалога — помни предыдущие вопросы и ответы.\n"
     )
 
     if has_sales_data:
