@@ -99,4 +99,12 @@ export const api = {
 
   // Monitoring
   getStats: () => request('/monitoring/stats'),
+
+  // TrueConf Bot
+  getTrueConfStatus: () => request('/trueconf/status'),
+  startTrueConfBot: () => request('/trueconf/start', { method: 'POST' }),
+  stopTrueConfBot: () => request('/trueconf/stop', { method: 'POST' }),
+  testTrueConfConnection: () => request('/trueconf/test', { method: 'POST' }),
+  getTrueConfChats: () => request('/trueconf/chats'),
+  sendTrueConfMessage: (data) => request('/trueconf/send', { method: 'POST', body: JSON.stringify(data) }),
 }
