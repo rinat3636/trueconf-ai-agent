@@ -21,10 +21,16 @@ from app.core.config import settings
 from app.core.llm import chat_completion
 from app.core.redis import get_cached, set_cached, cache_key
 from app.models.knowledge import CorporateRule, AnswerCorrection
+from app.models.analytics import SalesReport
 from app.services.knowledge_service import (
     search_knowledge,
     search_corrections,
     detect_query_intent,
+)
+from app.services.analytics_service import (
+    get_sales_analytics,
+    get_product_analysis,
+    _format_analytics_for_ai,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,10 +227,49 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
         for item in context_items
     ]
 
+    # --- STEP 4b: Sales Data (if sales intent) ---
+    sales_context = ""
+    if intent.get("intent") == "sales_query":
+        try:
+            latest_report = await db.execute(
+                select(SalesReport).order_by(SalesReport.id.desc()).limit(1)
+            )
+            report = latest_report.scalar_one_or_none()
+            if report:
+                analytics = await get_sales_analytics(db, report.id)
+                if "error" not in analytics:
+                    sales_context = _format_analytics_for_ai(analytics)
+                    product_data = await get_product_analysis(db, report.id)
+                    if product_data.get("products"):
+                        sales_context += "\n\nТоп-10 продуктов по выручке:\n"
+                        for p in product_data["products"][:10]:
+                            sales_context += (
+                                f"  {p['name']}: выручка {p['total_revenue']:,.0f}, "
+                                f"маржа {p['avg_margin']:.1f}%, доля {p['revenue_share_pct']:.1f}%\n"
+                            )
+                    if product_data.get("sku_dependencies"):
+                        sales_context += "\nЗависимость от SKU:\n"
+                        for dep in product_data["sku_dependencies"]:
+                            sales_context += f"  {dep['name']}: {dep['revenue_share_pct']:.1f}% выручки (риск: {dep['risk']})\n"
+                    trace["pipeline"]["sales_data"] = {"loaded": True, "report_id": report.id}
+        except Exception as e:
+            logger.warning("Failed to load sales data: %s", e)
+            trace["pipeline"]["sales_data"] = {"loaded": False, "error": str(e)}
+
     # --- STEP 5: Context Assembly ---
     context_text = ""
     sources_response = []
     total_context_chars = 0
+
+    if sales_context:
+        context_text += f"\n--- АНАЛИТИКА ПРОДАЖ ---\n{sales_context}\n"
+        total_context_chars += len(sales_context)
+        sources_response.append({
+            "document_id": None,
+            "document_title": "Аналитика продаж (последний отчёт)",
+            "relevance_score": 1.0,
+            "chunk_preview": sales_context[:200],
+        })
 
     for item in context_items:
         chunk = item["content"]
@@ -244,7 +289,7 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
     trace["pipeline"]["context_tokens"] = total_context_chars // 4
 
     # --- STEP 6: LLM Generation ---
-    system_prompt = _build_system_prompt(rules_data)
+    system_prompt = _build_system_prompt(rules_data, has_sales_data=bool(sales_context))
     messages = [{"role": "system", "content": system_prompt}]
 
     if context_text:
@@ -268,7 +313,9 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
     if context_items:
         top_scores = [item["score"] for item in context_items[:3]]
         confidence = sum(top_scores) / len(top_scores)
-    if not context_items:
+    if sales_context:
+        confidence = max(confidence, 0.85)
+    if not context_items and not sales_context:
         confidence = 0.1
 
     # --- STEP 7: Tracing ---
@@ -302,16 +349,31 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
     return result
 
 
-def _build_system_prompt(rules: List[Dict[str, Any]]) -> str:
+def _build_system_prompt(rules: List[Dict[str, Any]], has_sales_data: bool = False) -> str:
     prompt = (
         'Ты — корпоративный ИИ-ассистент компании ТД "Мир Мороженого" '
-        '(дистрибьютор мороженого и продуктов питания, Владимирская область).\n'
-        "Ты отвечаешь ТОЛЬКО на основании предоставленного контекста из базы знаний.\n"
-        "Если информации нет в предоставленном контексте, отвечай: "
-        '"Информация отсутствует в базе знаний."\n'
-        "Указывай источники информации, если они известны.\n"
-        "Отвечай на русском языке. Будь точен и конкретен.\n"
+        '(дистрибьютор мороженого и продуктов питания, Владимирская область).\n\n'
+        "СТРОГИЕ ПРАВИЛА:\n"
+        "1. Ты отвечаешь ТОЛЬКО на основании данных из предоставленного контекста "
+        "(база знаний и аналитика продаж). НИКОГДА не придумывай информацию.\n"
+        "2. Если данных недостаточно для полного ответа — задай уточняющий вопрос "
+        "по теме. Например: «Вы имеете в виду конкретного ТП или общую статистику?», "
+        "«За какой период вас интересуют данные?», «Уточните, вас интересует "
+        "маржинальность или выручка?»\n"
+        "3. Если информации совсем нет в контексте и уточнение не поможет, "
+        "скажи: «По этой теме данных в базе пока нет. Попробуйте спросить о "
+        "продажах, ТП, клиентах или продуктах.»\n"
+        "4. Указывай источники информации (документ или аналитика продаж).\n"
+        "5. Отвечай на русском языке. Будь точен, конкретен, приводи цифры.\n"
     )
+
+    if has_sales_data:
+        prompt += (
+            "\nТебе доступны данные аналитики продаж из загруженных отчётов. "
+            "Когда пользователь спрашивает про продажи, выручку, прибыль, "
+            "менеджеров (ТП), клиентов, маржу, ассортимент — используй данные "
+            "из раздела АНАЛИТИКА ПРОДАЖ. Приводи конкретные цифры и имена.\n"
+        )
 
     if rules:
         prompt += "\n--- КОРПОРАТИВНЫЕ ПРАВИЛА (обязательны к применению) ---\n"

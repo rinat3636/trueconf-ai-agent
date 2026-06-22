@@ -232,6 +232,8 @@ def detect_query_intent(question: str) -> Dict[str, Any]:
     is_sales = any(kw in q_lower for kw in [
         "продаж", "выручк", "прибыл", "маржа", "тп ", "менеджер",
         "клиент", "аналитик", "отчёт", "отчет", "рейтинг", "топ",
+        "продать", "sku", "ассортимент", "товар", "продукт",
+        "лучший", "худший", "слабый", "сильный", "рост",
     ])
 
     intent = "sales_query" if is_sales else "knowledge_query"
