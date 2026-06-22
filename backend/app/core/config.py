@@ -31,7 +31,9 @@ class Settings(BaseSettings):
 
     # TrueConf
     TRUECONF_API_URL: str = ""
-    TRUECONF_API_KEY: str = ""
+    TRUECONF_CLIENT_ID: str = ""
+    TRUECONF_CLIENT_SECRET: str = ""
+    TRUECONF_OAUTH_REDIRECT_URI: str = "https://localhost/"
     TRUECONF_BOT_ID: str = ""
 
     # Upload

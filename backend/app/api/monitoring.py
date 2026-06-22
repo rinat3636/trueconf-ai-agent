@@ -120,4 +120,11 @@ async def health_check():
         status["services"]["qdrant"] = f"error: {str(e)}"
         status["status"] = "degraded"
 
+    try:
+        from app.services.trueconf_bot import trueconf_bot
+        tc_status = await trueconf_bot.check_connection()
+        status["services"]["trueconf"] = tc_status.get("status", "unknown")
+    except Exception as e:
+        status["services"]["trueconf"] = f"error: {str(e)}"
+
     return status
