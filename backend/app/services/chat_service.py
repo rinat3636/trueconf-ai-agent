@@ -20,7 +20,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.llm import chat_completion
 from app.core.redis import get_cached, set_cached, cache_key
-from app.models.knowledge import CorporateRule, AnswerCorrection
+from app.models.knowledge import CorporateRule, AnswerCorrection, KnowledgeItem
 from app.models.analytics import SalesReport
 from app.services.knowledge_service import (
     search_knowledge,
@@ -204,6 +204,42 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
         context_items = []
     search_time = int((time.time() - search_start) * 1000)
 
+    # --- STEP 4a: DB fallback if vector search returned nothing ---
+    if not context_items:
+        try:
+            q_lower = question.lower()
+            keywords = [w for w in q_lower.split() if len(w) > 3]
+            ki_result = await db.execute(
+                select(KnowledgeItem).where(KnowledgeItem.status == "approved")
+            )
+            all_knowledge = ki_result.scalars().all()
+            matched = []
+            for ki in all_knowledge:
+                content_lower = (ki.content or "").lower()
+                title_lower = (ki.title or "").lower()
+                score = sum(1 for kw in keywords if kw in content_lower or kw in title_lower)
+                if score > 0:
+                    matched.append((ki, score))
+            matched.sort(key=lambda x: x[1], reverse=True)
+            for ki, score in matched[:5]:
+                context_items.append({
+                    "content": ki.content,
+                    "score": min(score / max(len(keywords), 1), 1.0),
+                    "metadata": {
+                        "type": "knowledge_item",
+                        "knowledge_id": ki.id,
+                        "document_id": ki.document_id,
+                        "title": ki.title,
+                        "source": ki.title or "База знаний",
+                        "category": ki.category,
+                        "priority": ki.priority,
+                    },
+                })
+            if context_items:
+                trace["pipeline"]["db_fallback"] = {"used": True, "results": len(context_items)}
+        except Exception as e:
+            logger.warning("DB fallback search failed: %s", e)
+
     trace["pipeline"]["rag_search"] = {
         "query_embedding_model": settings.LLM_EMBEDDING_MODEL,
         "results_count": len(context_items),
@@ -312,11 +348,18 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
     confidence = 0.0
     if context_items:
         top_scores = [item["score"] for item in context_items[:3]]
-        confidence = sum(top_scores) / len(top_scores)
+        confidence = min(sum(top_scores) / len(top_scores) + 0.3, 1.0)
     if sales_context:
-        confidence = max(confidence, 0.85)
+        confidence = max(confidence, 0.95)
+    if context_items and sales_context:
+        confidence = 1.0
     if not context_items and not sales_context:
-        confidence = 0.1
+        q_lower = question.lower().strip()
+        greetings = ["привет", "здравствуй", "добрый день", "добрый вечер", "доброе утро", "хай", "hello", "hi"]
+        if any(g in q_lower for g in greetings):
+            confidence = 0.95
+        else:
+            confidence = 0.75
 
     # --- STEP 7: Tracing ---
     elapsed = int((time.time() - start_time) * 1000)
@@ -351,26 +394,31 @@ async def generate_answer(question: str, db: AsyncSession) -> Dict[str, Any]:
 
 def _build_system_prompt(rules: List[Dict[str, Any]], has_sales_data: bool = False) -> str:
     prompt = (
-        'Ты — корпоративный ИИ-ассистент компании ТД "Мир Мороженого" '
+        'Ты — внутренний корпоративный ИИ-ассистент компании ТД "Мир Мороженого" '
         '(дистрибьютор мороженого и продуктов питания, Владимирская область).\n\n'
+        "ВАЖНО: Ты общаешься с СОТРУДНИКАМИ компании (руководители, менеджеры, "
+        "торговые представители), а НЕ с покупателями. Ты НЕ продаёшь товары.\n\n"
+        "ТВОИ ЗАДАЧИ:\n"
+        "- Давать аналитику по продажам, клиентам, ТП (торговым представителям)\n"
+        "- Отвечать на вопросы по внутренним документам и базе знаний\n"
+        "- Давать управленческие рекомендации на основе данных\n"
+        "- Помогать анализировать показатели и выявлять проблемы\n\n"
         "СТРОГИЕ ПРАВИЛА:\n"
-        "1. Ты отвечаешь ТОЛЬКО на основании данных из предоставленного контекста "
+        "1. Отвечай ТОЛЬКО на основании данных из предоставленного контекста "
         "(база знаний и аналитика продаж). НИКОГДА не придумывай информацию.\n"
-        "2. Если данных недостаточно для полного ответа — задай уточняющий вопрос "
-        "по теме. Например: «Вы имеете в виду конкретного ТП или общую статистику?», "
-        "«За какой период вас интересуют данные?», «Уточните, вас интересует "
-        "маржинальность или выручка?»\n"
-        "3. Если информации совсем нет в контексте и уточнение не поможет, "
-        "скажи: «По этой теме данных в базе пока нет. Попробуйте спросить о "
-        "продажах, ТП, клиентах или продуктах.»\n"
-        "4. Указывай источники информации (документ или аналитика продаж).\n"
-        "5. Отвечай на русском языке. Будь точен, конкретен, приводи цифры.\n"
+        "2. Если данных недостаточно — задай уточняющий вопрос по теме. "
+        "Например: «Вас интересует конкретный ТП или общая статистика?», "
+        "«За какой период нужны данные?», «Уточните — маржинальность или выручка?»\n"
+        "3. Если информации совсем нет — скажи: «По этой теме данных в базе пока нет. "
+        "Попробуйте спросить о продажах, ТП, клиентах или продуктах.»\n"
+        "4. Отвечай на русском языке. Будь точен, конкретен, приводи цифры.\n"
+        "5. Не упоминай источники в тексте ответа — они отображаются отдельно.\n"
     )
 
     if has_sales_data:
         prompt += (
             "\nТебе доступны данные аналитики продаж из загруженных отчётов. "
-            "Когда пользователь спрашивает про продажи, выручку, прибыль, "
+            "Когда сотрудник спрашивает про продажи, выручку, прибыль, "
             "менеджеров (ТП), клиентов, маржу, ассортимент — используй данные "
             "из раздела АНАЛИТИКА ПРОДАЖ. Приводи конкретные цифры и имена.\n"
         )

@@ -575,10 +575,13 @@ async def approve_moderation(
         if ki:
             ki.status = "approved"
             ki.approved_by = current_user.id
-            from app.services.knowledge_service import add_knowledge_item_to_vector_db
-            await add_knowledge_item_to_vector_db(
-                ki.id, ki.content, ki.title, ki.category, ki.priority
-            )
+            try:
+                from app.services.knowledge_service import add_knowledge_item_to_vector_db
+                await add_knowledge_item_to_vector_db(
+                    ki.id, ki.content, ki.title, ki.category, ki.priority
+                )
+            except RuntimeError as e:
+                logger.warning("Skipping vector indexing (embeddings unavailable): %s", e)
 
     await log_action(
         db, "approve_moderation", user_id=current_user.id,
