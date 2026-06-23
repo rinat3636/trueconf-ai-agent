@@ -221,6 +221,13 @@ def _create_bot(token: str):
         ws_max_delay=60,
     )
 
+    # The library's check_version() calls /api/v4/server which only exists
+    # on the admin API (port 4307), not on Bridge (port 4309).
+    # Skip it to avoid 404 errors when connecting via Bridge directly.
+    async def _noop():
+        pass
+    bot.check_version = _noop
+
     return bot
 
 
