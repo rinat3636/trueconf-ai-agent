@@ -1,6 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, ThumbsUp, ThumbsDown, FileText } from 'lucide-react'
+import { Send, ThumbsUp, ThumbsDown, FileText, Bot, User, Plus, Sparkles } from 'lucide-react'
 import { api } from '../services/api'
+
+const SUGGESTIONS = [
+  'Какие продукты есть в каталоге?',
+  'Покажи аналитику продаж',
+  'Кто лучшие торговые представители?',
+  'Условия хранения мороженого',
+]
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([])
@@ -8,22 +15,28 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const messagesEnd = useRef(null)
+  const inputRef = useRef(null)
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSend = async (e) => {
-    e.preventDefault()
-    if (!input.trim() || loading) return
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
 
-    const userMsg = { role: 'user', content: input, id: Date.now() }
+  const handleSend = async (e) => {
+    e?.preventDefault()
+    const text = input.trim()
+    if (!text || loading) return
+
+    const userMsg = { role: 'user', content: text, id: Date.now() }
     setMessages(prev => [...prev, userMsg])
     setInput('')
     setLoading(true)
 
     try {
-      const data = await api.ask({ message: input, session_id: sessionId })
+      const data = await api.ask({ message: text, session_id: sessionId })
       setSessionId(data.session_id)
       const assistantMsg = {
         role: 'assistant',
@@ -38,11 +51,32 @@ export default function ChatPage() {
     } catch (err) {
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: `Ошибка: ${err.message}`, id: Date.now() + 1 },
+        { role: 'assistant', content: `Ошибка: ${err.message}`, id: Date.now() + 1, isError: true },
       ])
     } finally {
       setLoading(false)
+      inputRef.current?.focus()
     }
+  }
+
+  const handleSuggestion = (text) => {
+    setInput(text)
+    setTimeout(() => {
+      setInput('')
+      const userMsg = { role: 'user', content: text, id: Date.now() }
+      setMessages(prev => [...prev, userMsg])
+      setLoading(true)
+      api.ask({ message: text, session_id: sessionId }).then(data => {
+        setSessionId(data.session_id)
+        setMessages(prev => [...prev, {
+          role: 'assistant', content: data.answer, sources: data.sources,
+          rules_applied: data.rules_applied, confidence: data.confidence,
+          message_id: data.message_id, id: data.message_id || Date.now() + 1,
+        }])
+      }).catch(err => {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Ошибка: ${err.message}`, id: Date.now() + 1, isError: true }])
+      }).finally(() => setLoading(false))
+    }, 0)
   }
 
   const handleFeedback = async (msg, feedback) => {
@@ -59,66 +93,91 @@ export default function ChatPage() {
   const startNewSession = () => {
     setMessages([])
     setSessionId(null)
+    inputRef.current?.focus()
   }
 
   return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1>Чат с ИИ</h1>
-          <p>Задавайте вопросы по базе знаний и аналитике</p>
+    <div className="chat-page">
+      <div className="chat-page-header">
+        <div className="chat-page-header-left">
+          <div className="chat-page-avatar">
+            <Bot size={20} />
+          </div>
+          <div>
+            <h1>Чат с ИИ</h1>
+            <p>Ассистент по базе знаний и аналитике</p>
+          </div>
         </div>
         {sessionId && (
-          <button className="btn btn-outline" onClick={startNewSession}>Новый диалог</button>
+          <button className="chat-new-btn" onClick={startNewSession}>
+            <Plus size={16} />
+            <span>Новый диалог</span>
+          </button>
         )}
       </div>
 
       <div className="chat-container">
         <div className="chat-messages">
           {messages.length === 0 && (
-            <div className="empty-state">
-              <MessageIcon />
-              <p>Задайте вопрос ИИ-ассистенту</p>
-              <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: '#9ca3af' }}>
-                Примеры: «Какие продукты есть в каталоге?», «Покажи аналитику продаж»,
-                «Кто лучшие ТП?»
-              </p>
+            <div className="chat-welcome">
+              <div className="chat-welcome-icon">
+                <Sparkles size={32} />
+              </div>
+              <h2>Добро пожаловать!</h2>
+              <p>Я ИИ-ассистент компании «Мир Мороженого». Задайте мне вопрос по базе знаний, аналитике продаж или продуктам.</p>
+              <div className="chat-suggestions">
+                {SUGGESTIONS.map((s, i) => (
+                  <button key={i} className="chat-suggestion-btn" onClick={() => handleSuggestion(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
           {messages.map((msg) => (
-            <div key={msg.id} className={`chat-message ${msg.role}`}>
-              <div>
-                <div className="chat-bubble">{msg.content}</div>
+            <div key={msg.id} className={`chat-msg ${msg.role} ${msg.isError ? 'error' : ''}`}>
+              <div className="chat-msg-avatar">
+                {msg.role === 'user' ? <User size={18} /> : <Bot size={18} />}
+              </div>
+              <div className="chat-msg-body">
+                <div className="chat-msg-name">
+                  {msg.role === 'user' ? 'Вы' : 'ИИ Ассистент'}
+                </div>
+                <div className="chat-msg-bubble">{msg.content}</div>
+
                 {msg.sources && msg.sources.length > 0 && (
-                  <div className="chat-sources">
-                    <FileText size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                    Источники: {msg.sources.map(s => s.document_title || s.title || 'База знаний').join(', ')}
+                  <div className="chat-msg-meta">
+                    <FileText size={12} />
+                    <span>Источники: {msg.sources.map(s => s.document_title || s.title || 'База знаний').join(', ')}</span>
                   </div>
                 )}
                 {msg.rules_applied && msg.rules_applied.length > 0 && (
-                  <div className="chat-sources">
-                    Правила: {msg.rules_applied.map(r => r.title || r.rule_type || r).join(', ')}
+                  <div className="chat-msg-meta">
+                    <span>Правила: {msg.rules_applied.map(r => r.title || r.rule_type || r).join(', ')}</span>
                   </div>
                 )}
                 {msg.confidence != null && msg.confidence > 0 && (
-                  <div className="chat-sources">
-                    Уверенность: {(msg.confidence * 100).toFixed(0)}%
+                  <div className="chat-msg-meta">
+                    <span>Уверенность: {(msg.confidence * 100).toFixed(0)}%</span>
                   </div>
                 )}
-                {msg.role === 'assistant' && !msg.feedback && (
-                  <div className="chat-feedback">
-                    <button onClick={() => handleFeedback(msg, 'useful')} title="Полезно">
+
+                {msg.role === 'assistant' && !msg.feedback && !msg.isError && (
+                  <div className="chat-msg-actions">
+                    <button className="chat-action-btn" onClick={() => handleFeedback(msg, 'useful')} title="Полезно">
                       <ThumbsUp size={14} />
                     </button>
-                    <button onClick={() => handleFeedback(msg, 'not_useful')} title="Не полезно">
+                    <button className="chat-action-btn" onClick={() => handleFeedback(msg, 'not_useful')} title="Не полезно">
                       <ThumbsDown size={14} />
                     </button>
                   </div>
                 )}
                 {msg.feedback && (
-                  <div className="chat-sources">
-                    {msg.feedback === 'useful' ? 'Полезно' : 'Не полезно'}
+                  <div className="chat-msg-meta">
+                    <span className={`chat-feedback-label ${msg.feedback === 'useful' ? 'positive' : 'negative'}`}>
+                      {msg.feedback === 'useful' ? 'Полезно' : 'Не полезно'}
+                    </span>
                   </div>
                 )}
               </div>
@@ -126,11 +185,16 @@ export default function ChatPage() {
           ))}
 
           {loading && (
-            <div className="chat-message assistant">
-              <div className="chat-bubble">
-                <div className="loading" style={{ padding: '0.25rem' }}>
-                  <div className="spinner" style={{ width: '1rem', height: '1rem' }} />
-                  Думаю...
+            <div className="chat-msg assistant">
+              <div className="chat-msg-avatar">
+                <Bot size={18} />
+              </div>
+              <div className="chat-msg-body">
+                <div className="chat-msg-name">ИИ Ассистент</div>
+                <div className="chat-msg-bubble">
+                  <div className="chat-typing">
+                    <span></span><span></span><span></span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -139,27 +203,22 @@ export default function ChatPage() {
           <div ref={messagesEnd} />
         </div>
 
-        <form className="chat-input" onSubmit={handleSend}>
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Введите ваш вопрос..."
-            disabled={loading}
-          />
-          <button type="submit" disabled={loading || !input.trim()}>
-            <Send size={18} />
-          </button>
+        <form className="chat-input-bar" onSubmit={handleSend}>
+          <div className="chat-input-wrapper">
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Введите ваш вопрос..."
+              disabled={loading}
+            />
+            <button type="submit" disabled={loading || !input.trim()} className="chat-send-btn">
+              <Send size={18} />
+            </button>
+          </div>
         </form>
       </div>
     </div>
-  )
-}
-
-function MessageIcon() {
-  return (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" strokeWidth="1.5">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
   )
 }

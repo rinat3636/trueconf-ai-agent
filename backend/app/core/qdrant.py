@@ -7,7 +7,7 @@ from app.core.config import settings
 
 KNOWLEDGE_COLLECTION = "knowledge_base"
 CORRECTIONS_COLLECTION = "answer_corrections"
-VECTOR_SIZE = 1536
+VECTOR_SIZE = 384  # multilingual-e5-small (fastembed)
 
 _client: Optional[QdrantClient] = None
 
@@ -24,7 +24,16 @@ def init_collections():
 
     for collection_name in [KNOWLEDGE_COLLECTION, CORRECTIONS_COLLECTION]:
         collections = [c.name for c in client.get_collections().collections]
-        if collection_name not in collections:
+        if collection_name in collections:
+            info = client.get_collection(collection_name)
+            existing_size = info.config.params.vectors.size
+            if existing_size != VECTOR_SIZE:
+                client.delete_collection(collection_name)
+                client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+                )
+        else:
             client.create_collection(
                 collection_name=collection_name,
                 vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),

@@ -435,12 +435,188 @@ def _is_product_name(name: str) -> bool:
     return bool(_PRODUCT_PATTERN.search(name))
 
 
+def _parse_flat_table(df: "pd.DataFrame") -> Tuple[List[dict], dict]:
+    """Parse flat tabular sales data (CSV/XLSX with column headers like Менеджер, Клиент, Продукт, etc.)."""
+    columns_lower = [str(c).lower().strip() for c in df.columns]
+
+    # Detect column mapping by keywords
+    col_map = {}
+    manager_keywords = ["менеджер", "тп", "торговый представитель", "manager", "rep"]
+    client_keywords = ["клиент", "контрагент", "покупатель", "client", "customer"]
+    product_keywords = ["продукт", "товар", "наименование товара", "sku", "product", "номенклатура"]
+    quantity_keywords = ["количество", "кол-во", "кол", "qty", "quantity", "шт"]
+    revenue_keywords = ["сумма", "выручка", "стоимость", "revenue", "total", "оборот"]
+    profit_keywords = ["прибыль", "маржа сумма", "profit", "gross"]
+    price_keywords = ["цена", "price"]
+    date_keywords = ["дата", "date", "период"]
+
+    for i, col in enumerate(columns_lower):
+        for kw in manager_keywords:
+            if kw in col and "manager" not in col_map:
+                col_map["manager"] = i
+                break
+        for kw in client_keywords:
+            if kw in col and "client" not in col_map:
+                col_map["client"] = i
+                break
+        for kw in product_keywords:
+            if kw in col and "product" not in col_map:
+                col_map["product"] = i
+                break
+        for kw in quantity_keywords:
+            if kw in col and "quantity" not in col_map:
+                col_map["quantity"] = i
+                break
+        for kw in revenue_keywords:
+            if kw in col and "revenue" not in col_map:
+                col_map["revenue"] = i
+                break
+        for kw in profit_keywords:
+            if kw in col and "profit" not in col_map:
+                col_map["profit"] = i
+                break
+        for kw in price_keywords:
+            if kw in col and "price" not in col_map:
+                col_map["price"] = i
+                break
+        for kw in date_keywords:
+            if kw in col and "date" not in col_map:
+                col_map["date"] = i
+                break
+
+    if "manager" not in col_map:
+        return [], {}
+
+    records = []
+    manager_agg: dict = {}
+    client_agg: dict = {}
+
+    for _, row in df.iterrows():
+        vals = row.values
+        manager = str(vals[col_map["manager"]]).strip() if col_map.get("manager") is not None and pd.notna(vals[col_map["manager"]]) else ""
+        client = str(vals[col_map["client"]]).strip() if col_map.get("client") is not None and pd.notna(vals[col_map["client"]]) else ""
+        product = str(vals[col_map["product"]]).strip() if col_map.get("product") is not None and pd.notna(vals[col_map["product"]]) else ""
+
+        if not manager:
+            continue
+
+        def _num(idx_key):
+            if idx_key not in col_map:
+                return None
+            v = vals[col_map[idx_key]]
+            if pd.notna(v):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+            return None
+
+        quantity = _num("quantity")
+        revenue = _num("revenue")
+        profit = _num("profit")
+        price = _num("price")
+
+        # If revenue not present but price and quantity are, compute it
+        if revenue is None and price is not None and quantity is not None:
+            revenue = price * quantity
+
+        # Product-level record
+        if product:
+            records.append({
+                "manager_name": manager,
+                "client_name": client or "(без клиента)",
+                "product_name": product,
+                "quantity": quantity,
+                "tonnage": None,
+                "revenue": revenue,
+                "profit": profit,
+                "margin_pct": round(profit / revenue * 100, 2) if profit and revenue else None,
+                "record_level": "product",
+            })
+
+        # Aggregate for manager
+        if manager not in manager_agg:
+            manager_agg[manager] = {"quantity": 0, "revenue": 0, "profit": 0}
+        manager_agg[manager]["quantity"] += quantity or 0
+        manager_agg[manager]["revenue"] += revenue or 0
+        manager_agg[manager]["profit"] += profit or 0
+
+        # Aggregate for client
+        if client:
+            key = (manager, client)
+            if key not in client_agg:
+                client_agg[key] = {"quantity": 0, "revenue": 0, "profit": 0}
+            client_agg[key]["quantity"] += quantity or 0
+            client_agg[key]["revenue"] += revenue or 0
+            client_agg[key]["profit"] += profit or 0
+
+    # Build manager-level records
+    manager_records = []
+    for mgr, agg in manager_agg.items():
+        margin = round(agg["profit"] / agg["revenue"] * 100, 2) if agg["revenue"] > 0 else None
+        manager_records.append({
+            "manager_name": mgr,
+            "client_name": None,
+            "product_name": None,
+            "quantity": agg["quantity"],
+            "tonnage": None,
+            "revenue": agg["revenue"],
+            "profit": agg["profit"],
+            "margin_pct": margin,
+            "record_level": "manager",
+        })
+
+    # Build client-level records
+    client_records = []
+    for (mgr, cli), agg in client_agg.items():
+        margin = round(agg["profit"] / agg["revenue"] * 100, 2) if agg["revenue"] > 0 else None
+        client_records.append({
+            "manager_name": mgr,
+            "client_name": cli,
+            "product_name": None,
+            "quantity": agg["quantity"],
+            "tonnage": None,
+            "revenue": agg["revenue"],
+            "profit": agg["profit"],
+            "margin_pct": margin,
+            "record_level": "client",
+        })
+
+    # Combine: managers first, then clients, then products
+    all_records = manager_records + client_records + records
+
+    # Metadata
+    metadata = {}
+    total_revenue = sum(r["revenue"] or 0 for r in manager_records)
+    total_profit = sum(r["profit"] or 0 for r in manager_records)
+    metadata["total_revenue"] = total_revenue
+    metadata["total_profit"] = total_profit
+    metadata["total_managers"] = len(manager_records)
+    metadata["total_clients"] = len(client_records)
+    unique_products = set(r["product_name"] for r in records if r.get("product_name"))
+    metadata["total_skus"] = len(unique_products)
+
+    # Try to detect period from date column
+    if "date" in col_map:
+        dates = []
+        for _, row in df.iterrows():
+            v = row.values[col_map["date"]]
+            if pd.notna(v):
+                dates.append(str(v))
+        if dates:
+            metadata["period"] = f"{dates[0]} - {dates[-1]}"
+
+    return all_records, metadata
+
+
 def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
     ext = os.path.splitext(file_path)[1].lower()
 
     try:
         if ext == ".xls":
             df = pd.read_excel(file_path, engine="xlrd", header=None)
+        elif ext == ".csv":
+            df = pd.read_csv(file_path, header=None)
         else:
             df = pd.read_excel(file_path, engine="openpyxl", header=None)
     except Exception:
@@ -449,6 +625,7 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
     records = []
     metadata = {}
 
+    # --- Try hierarchical 1C format first ---
     for idx, row in df.iterrows():
         values = [v for v in row.values if pd.notna(v)]
         if not values:
@@ -467,85 +644,83 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
             header_row = idx
             break
 
-    if header_row is None:
-        return records, metadata
+    if header_row is not None:
+        current_manager = None
+        current_client = None
 
-    current_manager = None
-    current_client = None
+        for idx in range(header_row + 3, len(df)):
+            row = df.iloc[idx]
+            values = [v for v in row.values]
 
-    for idx in range(header_row + 3, len(df)):
-        row = df.iloc[idx]
-        values = [v for v in row.values]
+            name_val = str(values[1]).strip() if len(values) > 1 and pd.notna(values[1]) else ""
+            if not name_val:
+                continue
 
-        name_val = str(values[1]).strip() if len(values) > 1 and pd.notna(values[1]) else ""
-        if not name_val:
-            continue
-
-        nums = []
-        for v in values[2:]:
-            if pd.notna(v):
-                try:
-                    nums.append(float(v))
-                except (ValueError, TypeError):
+            nums = []
+            for v in values[2:]:
+                if pd.notna(v):
+                    try:
+                        nums.append(float(v))
+                    except (ValueError, TypeError):
+                        nums.append(None)
+                else:
                     nums.append(None)
-            else:
-                nums.append(None)
 
-        has_numbers = any(n is not None for n in nums)
-        if not has_numbers:
-            continue
+            has_numbers = any(n is not None for n in nums)
+            if not has_numbers:
+                continue
 
-        quantity = nums[0] if len(nums) > 0 else None
-        tonnage = nums[1] if len(nums) > 1 else None
-        revenue = nums[2] if len(nums) > 2 else None
-        profit = nums[3] if len(nums) > 3 else None
-        margin = nums[4] if len(nums) > 4 else None
+            quantity = nums[0] if len(nums) > 0 else None
+            tonnage = nums[1] if len(nums) > 1 else None
+            revenue = nums[2] if len(nums) > 2 else None
+            profit = nums[3] if len(nums) > 3 else None
+            margin = nums[4] if len(nums) > 4 else None
 
-        is_total = "итого" in name_val.lower()
-        if is_total:
-            continue
+            is_total = "итого" in name_val.lower()
+            if is_total:
+                continue
 
-        if _is_manager_name(name_val):
-            current_manager = name_val
-            current_client = None
-            records.append({
-                "manager_name": current_manager,
-                "client_name": None,
-                "product_name": None,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "manager",
-            })
-        elif current_manager and _is_product_name(name_val):
-            if not current_client:
-                current_client = "(без клиента)"
-            records.append({
-                "manager_name": current_manager,
-                "client_name": current_client,
-                "product_name": name_val,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "product",
-            })
-        elif current_manager:
-            current_client = name_val
-            records.append({
-                "manager_name": current_manager,
-                "client_name": current_client,
-                "product_name": None,
-                "quantity": quantity,
-                "tonnage": tonnage,
-                "revenue": revenue,
-                "profit": profit,
-                "margin_pct": margin,
-                "record_level": "client",
-            })
+            if _is_manager_name(name_val):
+                current_manager = name_val
+                current_client = None
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": None,
+                    "product_name": None,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "manager",
+                })
+            elif current_manager and _is_product_name(name_val):
+                if not current_client:
+                    current_client = "(без клиента)"
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": current_client,
+                    "product_name": name_val,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "product",
+                })
+            elif current_manager:
+                current_client = name_val
+                records.append({
+                    "manager_name": current_manager,
+                    "client_name": current_client,
+                    "product_name": None,
+                    "quantity": quantity,
+                    "tonnage": tonnage,
+                    "revenue": revenue,
+                    "profit": profit,
+                    "margin_pct": margin,
+                    "record_level": "client",
+                })
 
     if records:
         manager_records = [r for r in records if r["record_level"] == "manager"]
@@ -557,5 +732,18 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
         product_records = [r for r in records if r["record_level"] == "product"]
         unique_products = set(r["product_name"] for r in product_records if r["product_name"])
         metadata["total_skus"] = len(unique_products)
+        return records, metadata
 
-    return records, metadata
+    # --- Fallback: try flat table format ---
+    # Re-read with first row as header
+    try:
+        if ext == ".xls":
+            df_header = pd.read_excel(file_path, engine="xlrd")
+        elif ext == ".csv":
+            df_header = pd.read_csv(file_path)
+        else:
+            df_header = pd.read_excel(file_path, engine="openpyxl")
+    except Exception:
+        df_header = pd.read_csv(file_path)
+
+    return _parse_flat_table(df_header)

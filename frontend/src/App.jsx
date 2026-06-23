@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Menu, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
@@ -20,6 +21,8 @@ function hasRole(user, roles) {
 
 export default function App() {
   const [user, setUser] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
 
   useEffect(() => {
     const saved = localStorage.getItem('user')
@@ -27,6 +30,10 @@ export default function App() {
       try { setUser(JSON.parse(saved)) } catch { /* ignore */ }
     }
   }, [])
+
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
 
   if (!user) {
     return <LoginPage onLogin={setUser} />
@@ -38,8 +45,16 @@ export default function App() {
 
   return (
     <div className="layout">
-      <Sidebar user={user} setUser={setUser} />
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <Sidebar user={user} setUser={setUser} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
       <div className="main-content">
+        <div className="mobile-header">
+          <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          <span className="mobile-header-title">Мир Мороженого AI</span>
+        </div>
         <Routes>
           <Route path="/" element={isAdminOrSuper ? <DashboardPage /> : <Navigate to="/chat" />} />
           <Route path="/chat" element={<ChatPage />} />

@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, BookOpen, GraduationCap, Shield,
   BarChart3, Activity, Users, LogOut, LayoutDashboard,
-  AlertTriangle, FileSearch, ClipboardList
+  AlertTriangle, FileSearch, ClipboardList, X
 } from 'lucide-react'
 
 const ROLE_LABELS = {
@@ -13,7 +13,7 @@ const ROLE_LABELS = {
   employee: 'Сотрудник',
 }
 
-export default function Sidebar({ user, setUser }) {
+export default function Sidebar({ user, setUser, isOpen, onClose }) {
   const navigate = useNavigate()
   const isAdminOrSuper = ['super_admin', 'admin'].includes(user?.role)
   const isManagerPlus = ['super_admin', 'admin', 'manager'].includes(user?.role)
@@ -27,9 +27,14 @@ export default function Sidebar({ user, setUser }) {
   }
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${isOpen ? 'sidebar-open' : ''}`}>
       <div className="sidebar-logo">
-        <h2>Мир Мороженого AI</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2>Мир Мороженого AI</h2>
+          <button className="sidebar-close-btn" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
         <p>{user?.full_name || user?.username}</p>
         <p style={{ fontSize: '0.65rem', color: '#6b7280' }}>{ROLE_LABELS[user?.role] || user?.role}</p>
       </div>
