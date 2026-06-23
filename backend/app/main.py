@@ -56,20 +56,20 @@ async def lifespan(app: FastAPI):
     scheduler_task = asyncio.create_task(scheduler_loop())
     _background_tasks.append(scheduler_task)
 
-    # Start TrueConf bot polling (if configured)
-    from app.services.trueconf_bot import trueconf_bot
-    if trueconf_bot.enabled:
-        bot_task = asyncio.create_task(trueconf_bot.start_polling())
+    # Start TrueConf bot (WebSocket via python-trueconf-bot)
+    from app.services.trueconf_bot import BOT_ENABLED, start_bot
+    if BOT_ENABLED:
+        bot_task = asyncio.create_task(start_bot())
         _background_tasks.append(bot_task)
-        logger.info("TrueConf bot polling started")
+        logger.info("TrueConf bot task started")
 
     yield
 
     # Shutdown
     from app.services.scheduler import stop_scheduler
-    from app.services.trueconf_bot import trueconf_bot as bot
+    from app.services.trueconf_bot import stop_bot
     stop_scheduler()
-    bot.stop_polling()
+    stop_bot()
 
     for task in _background_tasks:
         task.cancel()
