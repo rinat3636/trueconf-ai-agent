@@ -358,6 +358,30 @@ async def _reindex_all():
                     pass
 
 
+# --- Search ---
+
+@router.get("/search")
+async def search_knowledge_api(
+    query: str,
+    category: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Search knowledge base via vector similarity."""
+    from app.services.knowledge_service import search_knowledge
+
+    results = await search_knowledge(query, n_results=10, category=category)
+    return [
+        {
+            "content": r["content"],
+            "category": r["metadata"].get("category", "general"),
+            "title": r["metadata"].get("title", ""),
+            "score": round(r["score"], 3),
+            "source": r["metadata"].get("source", ""),
+        }
+        for r in results
+    ]
+
+
 # --- Corporate Rules ---
 
 @router.get("/rules", response_model=list[CorporateRuleResponse])
@@ -548,6 +572,60 @@ async def moderation_stats(
     )
     stats = {row[0]: row[1] for row in result.all()}
     return stats
+
+
+@router.post("/moderation/approve-all")
+async def approve_all_pending(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk approve all pending moderation items and their knowledge items."""
+    from datetime import datetime, timezone
+    from app.services.knowledge_service import add_knowledge_item_to_vector_db
+
+    result = await db.execute(
+        select(ModerationQueue).where(ModerationQueue.status == "pending")
+    )
+    pending_items = result.scalars().all()
+
+    approved_count = 0
+    for item in pending_items:
+        item.status = "approved"
+        item.reviewed_by = current_user.id
+        item.reviewed_at = datetime.now(timezone.utc)
+
+        if item.item_type in ("new_knowledge", "self_learned") and item.item_id:
+            ki_result = await db.execute(select(KnowledgeItem).where(KnowledgeItem.id == item.item_id))
+            ki = ki_result.scalar_one_or_none()
+            if ki and ki.status != "approved":
+                ki.status = "approved"
+                ki.approved_by = current_user.id
+                try:
+                    await add_knowledge_item_to_vector_db(
+                        ki.id, ki.content, ki.title, ki.category, ki.priority
+                    )
+                except Exception:
+                    pass
+        approved_count += 1
+
+    await db.commit()
+    return {"status": "ok", "approved": approved_count}
+
+
+@router.post("/moderation/{item_id}/action")
+async def moderate_item_action(
+    item_id: int,
+    action: ModerationAction,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Unified moderation action endpoint (approve/reject)."""
+    if action.action == "approve":
+        return await approve_moderation(item_id, action, current_user, db)
+    elif action.action == "reject":
+        return await reject_moderation(item_id, action, current_user, db)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {action.action}")
 
 
 @router.post("/moderation/{item_id}/approve")

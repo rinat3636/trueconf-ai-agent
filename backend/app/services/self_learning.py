@@ -44,6 +44,7 @@ async def process_document_pipeline(
     file_path: str,
     db: AsyncSession,
     user_id: Optional[int] = None,
+    auto_approve: bool = True,
 ):
     """Full document processing pipeline:
     1. Extract text
@@ -54,8 +55,8 @@ async def process_document_pipeline(
     6. Extract knowledge items (LLM)
     7. For each extracted knowledge:
        a. Check for conflicts (vector + LLM)
-       b. Create KnowledgeItem (status=pending_review)
-       c. Create ModerationQueue entry
+       b. Create KnowledgeItem (auto-approved for admin uploads)
+       c. Add to vector DB immediately
     """
     result = await db.execute(select(Document).where(Document.id == document_id))
     doc = result.scalar_one_or_none()
@@ -108,22 +109,35 @@ async def process_document_pipeline(
             knowledge_items = []
 
         # Step 7: For each extracted knowledge item
+        from app.services.knowledge_service import add_knowledge_item_to_vector_db
+
         for ki_data in knowledge_items:
+            item_status = "approved" if auto_approve else "pending_review"
             ki = KnowledgeItem(
                 document_id=document_id,
                 title=ki_data["title"],
                 content=ki_data["content"],
                 category=ki_data.get("category", doc.category or "general"),
-                status="pending_review",
+                status=item_status,
                 version=1,
                 priority=50,
                 source_chunk=ki_data.get("source_chunk", ""),
+                approved_by=user_id if auto_approve else None,
             )
             db.add(ki)
             await db.flush()
             await db.refresh(ki)
 
-            # 7a: Check for conflicts
+            # 7a: Add to vector DB immediately if auto-approved
+            if auto_approve:
+                try:
+                    await add_knowledge_item_to_vector_db(
+                        ki.id, ki.content, ki.title, ki.category, ki.priority
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to add knowledge item {ki.id} to vector DB: {e}")
+
+            # 7b: Check for conflicts (non-blocking)
             try:
                 conflicts = await run_conflict_detection(ki_data["content"], new_item_id=ki.id)
                 for conflict_data in conflicts:
@@ -136,41 +150,8 @@ async def process_document_pipeline(
                     )
                     db.add(conflict)
                     await db.flush()
-
-                    # Create moderation queue entry for conflict
-                    mod_conflict = ModerationQueue(
-                        item_type="conflict",
-                        item_id=conflict.id,
-                        action="resolve_conflict",
-                        payload={
-                            "new_item_title": ki.title,
-                            "conflict_type": conflict_data["conflict_type"],
-                            "similarity_score": conflict_data.get("similarity_score"),
-                            "existing_item_id": conflict_data.get("existing_item_id"),
-                        },
-                        status="pending",
-                        created_by=user_id,
-                    )
-                    db.add(mod_conflict)
             except Exception as e:
                 logger.warning(f"Conflict detection failed for item {ki.id}: {e}")
-
-            # 7b: Create moderation queue entry for new knowledge
-            mod_item = ModerationQueue(
-                item_type="new_knowledge",
-                item_id=ki.id,
-                action="approve_knowledge",
-                payload={
-                    "title": ki.title,
-                    "content": ki.content[:500],
-                    "category": ki.category,
-                    "document_id": document_id,
-                    "document_name": doc.filename,
-                },
-                status="pending",
-                created_by=user_id,
-            )
-            db.add(mod_item)
 
         doc.status = "processed"
         doc.processed_at = datetime.now(timezone.utc)
