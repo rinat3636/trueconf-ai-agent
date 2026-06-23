@@ -176,6 +176,8 @@ def _create_bot(token: str):
     dp = Dispatcher()
     dp.include_router(router)
 
+    BOT_PREFIX = "aibot"
+
     @router.message(F.text)
     async def on_text_message(message: Message):
         sender_id = message.from_user.id if message.from_user else ""
@@ -185,15 +187,29 @@ def _create_bot(token: str):
         if not text.strip():
             return
 
+        stripped = text.strip()
+
+        # In group chats: only respond if message starts with "aibot"
+        # In P2P chats: respond to everything
+        is_p2p = chat_id.startswith("chat_p2p_")
+        if not is_p2p:
+            lower = stripped.lower()
+            if not lower.startswith(BOT_PREFIX):
+                return
+            # Strip the "aibot" prefix and any following whitespace/punctuation
+            stripped = stripped[len(BOT_PREFIX):].lstrip(" ,:")
+            if not stripped:
+                stripped = "Привет"
+
         logger.info(
-            "TrueConf message from %s in chat %s: %s",
-            sender_id, chat_id, text[:100],
+            "TrueConf message from %s in chat %s (p2p=%s): %s",
+            sender_id, chat_id, is_p2p, stripped[:100],
         )
 
         response = await handle_incoming_message(
             chat_id=chat_id,
             user_id=sender_id,
-            message_text=text.strip(),
+            message_text=stripped,
         )
 
         if response:
