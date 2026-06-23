@@ -1,18 +1,18 @@
 """
-TrueConf Chatbot Connector with OAuth2 authentication.
+TrueConf Chatbot via official python-trueconf-bot library.
 
-Integration with TrueConf Server via REST API v3.10.
+Uses the TrueConf Chatbot Connector API (WebSocket on port 4309).
+Requires a dedicated user account on TrueConf Server.
+
 Handles:
-  - OAuth2 client_credentials token management
+  - Token acquisition (HTTP or HTTPS, configurable port)
+  - WebSocket connection + auto-reconnect with retry
   - Incoming messages → RAG pipeline → response
   - User mapping: TrueConf ID → users.trueconf_id
-  - Rich formatting (markdown → TrueConf)
-  - Connection monitoring + reconnect
 """
 
 import asyncio
 import logging
-import time
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -27,342 +27,285 @@ from app.models.chat import ChatSession, ChatMessage
 
 logger = logging.getLogger(__name__)
 
+BOT_ENABLED = bool(
+    settings.TRUECONF_SERVER_ADDRESS
+    and settings.TRUECONF_BOT_USERNAME
+    and settings.TRUECONF_BOT_PASSWORD
+)
 
-class TrueConfBot:
-    def __init__(self):
-        self.api_url = settings.TRUECONF_API_URL.rstrip("/") if settings.TRUECONF_API_URL else ""
-        self.client_id = settings.TRUECONF_CLIENT_ID
-        self.client_secret = settings.TRUECONF_CLIENT_SECRET
-        self.redirect_uri = settings.TRUECONF_OAUTH_REDIRECT_URI
-        self.bot_id = settings.TRUECONF_BOT_ID
-        self.enabled = bool(self.api_url and self.client_id and self.client_secret)
+# Module-level reference, initialized lazily in start_bot()
+trueconf_bot = None
 
-        self._access_token: Optional[str] = None
-        self._token_expires_at: float = 0
-        self._running = False
-        self._poll_interval = 5
-        self._max_retries = 10
-        self._retry_delay = 30
-        self._processed_messages: set = set()
 
-    async def _get_access_token(self) -> Optional[str]:
-        """Get OAuth2 access token using client_credentials grant."""
-        if self._access_token and time.time() < self._token_expires_at - 60:
-            return self._access_token
-
-        async with httpx.AsyncClient(timeout=5, verify=False) as client:
-            try:
-                response = await client.post(
-                    f"{self.api_url}/oauth2/token",
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": self.client_id,
-                        "client_secret": self.client_secret,
-                    },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    self._access_token = data.get("access_token")
-                    expires_in = data.get("expires_in", 3600)
-                    self._token_expires_at = time.time() + expires_in
-                    logger.info("OAuth2 token obtained, expires in %ds", expires_in)
-                    return self._access_token
-                else:
-                    logger.error(
-                        "OAuth2 token request failed: %d %s",
-                        response.status_code, response.text,
-                    )
-                    return None
-            except Exception as e:
-                logger.error("OAuth2 token request error: %s", e)
-                return None
-
-    @property
-    async def headers(self) -> dict:
-        token = await self._get_access_token()
-        return {
-            "Authorization": f"Bearer {token}" if token else "",
-            "Content-Type": "application/json",
-        }
-
-    async def _request(self, method: str, path: str, **kwargs) -> Optional[httpx.Response]:
-        """Make authenticated request to TrueConf API."""
-        token = await self._get_access_token()
-        if not token:
-            return None
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-
-        async with httpx.AsyncClient(timeout=10, verify=False) as client:
-            try:
-                response = await client.request(
-                    method,
-                    f"{self.api_url}/api/v3.10{path}",
-                    headers=headers,
-                    **kwargs,
-                )
-                if response.status_code == 401:
-                    self._access_token = None
-                    token = await self._get_access_token()
-                    if token:
-                        headers["Authorization"] = f"Bearer {token}"
-                        response = await client.request(
-                            method,
-                            f"{self.api_url}/api/v3.10{path}",
-                            headers=headers,
-                            **kwargs,
-                        )
-                return response
-            except Exception as e:
-                logger.error("TrueConf API request error (%s %s): %s", method, path, e)
-                return None
-
-    async def send_message(self, chat_id: str, text: str) -> bool:
-        if not self.enabled:
-            return False
-
-        text = self._format_for_trueconf(text)
-
-        response = await self._request(
-            "POST",
-            f"/chats/{chat_id}/messages",
-            json={"text": text},
-        )
-        if response and response.status_code in (200, 201):
-            logger.info("Message sent to chat %s", chat_id)
-            return True
-        logger.warning(
-            "Failed to send message: %s",
-            response.text if response else "no response",
-        )
-        return False
-
-    async def get_messages(self, chat_id: str, limit: int = 50) -> list:
-        if not self.enabled:
-            return []
-
-        response = await self._request(
-            "GET",
-            f"/chats/{chat_id}/messages",
-            params={"limit": limit},
-        )
-        if response and response.status_code == 200:
-            return response.json().get("messages", [])
-        return []
-
-    async def get_chats(self) -> list:
-        if not self.enabled:
-            return []
-
-        response = await self._request("GET", "/chats")
-        if response and response.status_code == 200:
-            return response.json().get("chats", [])
-        return []
-
-    async def get_users(self) -> list:
-        if not self.enabled:
-            return []
-
-        response = await self._request("GET", "/users")
-        if response and response.status_code == 200:
-            return response.json().get("users", [])
-        return []
-
-    async def check_connection(self) -> dict:
-        """Check if TrueConf Server is reachable and token is valid."""
-        if not self.enabled:
-            return {"status": "disabled", "message": "TrueConf not configured"}
-
-        token = await self._get_access_token()
-        if not token:
-            return {"status": "error", "message": "Cannot obtain OAuth2 token"}
-
-        response = await self._request("GET", "/server/info")
-        if response and response.status_code == 200:
-            info = response.json()
-            return {
-                "status": "connected",
-                "server_id": info.get("server_id", ""),
-                "server_name": info.get("server_name", ""),
-            }
-        return {
-            "status": "error",
-            "message": f"Server returned {response.status_code}" if response else "No response",
-        }
-
-    async def handle_incoming_message(
-        self,
-        chat_id: str,
-        user_id: str,
-        message: str,
-        is_group: bool = False,
-    ) -> Optional[str]:
-        """Process incoming message from TrueConf chat."""
-        from app.services.chat_service import generate_answer
-
-        async with async_session() as db:
-            user = await self._get_or_create_user(db, user_id)
-            if not user:
-                return "Ошибка: не удалось идентифицировать пользователя."
-
-            session = await self._get_or_create_session(db, user.id, chat_id)
-
-            user_msg = ChatMessage(
-                session_id=session.id,
-                role="user",
-                content=message,
-            )
-            db.add(user_msg)
-            await db.flush()
-
-            try:
-                answer_data = await generate_answer(message, db)
-            except Exception as e:
-                logger.error("RAG pipeline error for TrueConf message: %s", e)
-                answer_data = {
-                    "answer": "Произошла ошибка при обработке запроса. Попробуйте позже.",
-                    "sources": [],
-                    "rules_applied": [],
-                    "confidence": 0.0,
-                    "response_time_ms": 0,
-                    "trace": {"error": str(e)},
-                }
-
-            assistant_msg = ChatMessage(
-                session_id=session.id,
-                role="assistant",
-                content=answer_data["answer"],
-                trace=answer_data.get("trace", {}),
-                response_time_ms=answer_data.get("response_time_ms", 0),
-            )
-            db.add(assistant_msg)
-
-            session.last_activity_at = datetime.now(timezone.utc)
-            await db.commit()
-
-            return answer_data["answer"]
-
-    async def _get_or_create_user(self, db: AsyncSession, trueconf_id: str) -> Optional[User]:
-        result = await db.execute(
-            select(User).where(User.trueconf_id == trueconf_id)
-        )
-        user = result.scalar_one_or_none()
-        if user:
-            return user
-
-        user = User(
-            username=f"tc_{trueconf_id}",
-            trueconf_id=trueconf_id,
-            full_name=trueconf_id,
-            hashed_password="trueconf_auth",
-            role="employee",
-        )
-        db.add(user)
-        await db.flush()
-        await db.refresh(user)
-        logger.info("Created user for TrueConf ID: %s", trueconf_id)
+async def _get_or_create_user(db: AsyncSession, trueconf_id: str) -> Optional[User]:
+    result = await db.execute(
+        select(User).where(User.trueconf_id == trueconf_id)
+    )
+    user = result.scalar_one_or_none()
+    if user:
         return user
 
-    async def _get_or_create_session(
-        self, db: AsyncSession, user_id: int, chat_id: str,
-    ) -> ChatSession:
-        result = await db.execute(
-            select(ChatSession).where(
-                ChatSession.user_id == user_id,
-                ChatSession.channel == "trueconf",
-            ).order_by(ChatSession.last_activity_at.desc()).limit(1)
-        )
-        session = result.scalar_one_or_none()
+    user = User(
+        username=f"tc_{trueconf_id.split('@')[0] if '@' in trueconf_id else trueconf_id}",
+        trueconf_id=trueconf_id,
+        full_name=trueconf_id,
+        hashed_password="trueconf_auth",
+        role="employee",
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+    logger.info("Created user for TrueConf ID: %s", trueconf_id)
+    return user
 
-        if session:
-            return session
 
-        session = ChatSession(
-            user_id=user_id,
-            channel="trueconf",
-        )
-        db.add(session)
-        await db.flush()
-        await db.refresh(session)
+async def _get_or_create_session(
+    db: AsyncSession, user_id: int, chat_id: str,
+) -> ChatSession:
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.user_id == user_id,
+            ChatSession.channel == "trueconf",
+        ).order_by(ChatSession.last_activity_at.desc()).limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if session:
         return session
 
-    def _format_for_trueconf(self, text: str) -> str:
-        """Convert markdown to TrueConf-friendly text."""
-        text = text.replace("**", "")
-        text = text.replace("```", "")
-        if len(text) > 4000:
-            text = text[:3997] + "..."
-        return text
+    session = ChatSession(
+        user_id=user_id,
+        channel="trueconf",
+    )
+    db.add(session)
+    await db.flush()
+    await db.refresh(session)
+    return session
 
-    async def start_polling(self):
-        """Start polling for new messages from TrueConf."""
-        if not self.enabled:
-            logger.info("TrueConf bot is not configured, skipping polling")
+
+async def handle_incoming_message(
+    chat_id: str,
+    user_id: str,
+    message_text: str,
+) -> Optional[str]:
+    """Process incoming message from TrueConf chat via RAG pipeline."""
+    from app.services.chat_service import generate_answer
+
+    async with async_session() as db:
+        user = await _get_or_create_user(db, user_id)
+        if not user:
+            return "Ошибка: не удалось идентифицировать пользователя."
+
+        session = await _get_or_create_session(db, user.id, chat_id)
+
+        user_msg = ChatMessage(
+            session_id=session.id,
+            role="user",
+            content=message_text,
+        )
+        db.add(user_msg)
+        await db.flush()
+
+        try:
+            answer_data = await generate_answer(message_text, db)
+        except Exception as e:
+            logger.error("RAG pipeline error for TrueConf message: %s", e)
+            answer_data = {
+                "answer": "Произошла ошибка при обработке запроса. Попробуйте позже.",
+                "sources": [],
+                "rules_applied": [],
+                "confidence": 0.0,
+                "response_time_ms": 0,
+                "trace": {"error": str(e)},
+            }
+
+        assistant_msg = ChatMessage(
+            session_id=session.id,
+            role="assistant",
+            content=answer_data["answer"],
+            trace=answer_data.get("trace", {}),
+            response_time_ms=answer_data.get("response_time_ms", 0),
+        )
+        db.add(assistant_msg)
+
+        session.last_activity_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        return answer_data["answer"]
+
+
+def _get_token_sync(
+    server: str,
+    username: str,
+    password: str,
+    use_https: bool,
+    port: int,
+) -> Optional[str]:
+    """
+    Get OAuth2 token from Bridge API.
+
+    The official library's _get_auth_token always uses HTTPS:443.
+    This function supports HTTP:4309 for local network deployments.
+    """
+    protocol = "https" if use_https else "http"
+    if port == 0:
+        port = 443 if use_https else 4309
+    url = f"{protocol}://{server}:{port}/bridge/api/client/v1/oauth/token"
+
+    logger.info("Requesting token from %s for user=%s", url, username)
+
+    with httpx.Client(timeout=10.0, verify=False) as client:
+        resp = client.post(url, json={
+            "client_id": "chat_bot",
+            "grant_type": "password",
+            "username": username,
+            "password": password,
+        })
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+        if token:
+            logger.info("Token obtained successfully for user=%s", username)
+        return token
+
+
+def _create_bot(token: str):
+    """Create Bot instance with pre-acquired token."""
+    from trueconf import Bot, Dispatcher, Router, Message, F
+    from trueconf.enums import ParseMode
+
+    router = Router(name="ai_agent")
+    dp = Dispatcher()
+    dp.include_router(router)
+
+    BOT_PREFIX = "aibot"
+
+    @router.message(F.text)
+    async def on_text_message(message: Message):
+        sender_id = message.from_user.id if message.from_user else ""
+        chat_id = message.chat_id or ""
+        text = message.text or ""
+
+        if not text.strip():
             return
 
-        conn = await self.check_connection()
-        if conn["status"] != "connected":
-            logger.warning("TrueConf Server not reachable: %s", conn)
+        stripped = text.strip()
 
-        self._running = True
-        retries = 0
-        logger.info("TrueConf bot polling started")
+        # In group chats: only respond if message starts with "aibot"
+        # In P2P chats: respond to everything
+        is_p2p = chat_id.startswith("chat_p2p_")
+        if not is_p2p:
+            lower = stripped.lower()
+            if not lower.startswith(BOT_PREFIX):
+                return
+            # Strip the "aibot" prefix and any following whitespace/punctuation
+            stripped = stripped[len(BOT_PREFIX):].lstrip(" ,:")
+            if not stripped:
+                stripped = "Привет"
 
-        while self._running:
+        logger.info(
+            "TrueConf message from %s in chat %s (p2p=%s): %s",
+            sender_id, chat_id, is_p2p, stripped[:100],
+        )
+
+        response = await handle_incoming_message(
+            chat_id=chat_id,
+            user_id=sender_id,
+            message_text=stripped,
+        )
+
+        if response:
             try:
-                chats = await self.get_chats()
-                for chat in chats:
-                    chat_id = chat.get("chatID", "")
-                    if not chat_id:
-                        continue
+                await message.answer(text=response, parse_mode=ParseMode.MARKDOWN)
+            except Exception:
+                try:
+                    await message.answer(text=response)
+                except Exception as e:
+                    logger.error("Failed to send response: %s", e)
 
-                    messages = await self.get_messages(chat_id, limit=5)
-                    for msg in messages:
-                        msg_id = msg.get("messageID", "")
-                        sender = msg.get("senderId", "")
-                        if sender == self.bot_id:
-                            continue
-                        if msg_id in self._processed_messages:
-                            continue
+    use_https = settings.TRUECONF_BOT_USE_HTTPS
+    web_port = settings.TRUECONF_BOT_WEB_PORT or None
 
-                        text = msg.get("text", "").strip()
-                        if not text:
-                            continue
+    bot = Bot(
+        server=settings.TRUECONF_SERVER_ADDRESS,
+        token=token,
+        dispatcher=dp,
+        verify_ssl=False,
+        https=use_https,
+        web_port=web_port,
+        receive_unread_messages=True,
+        skip_self_messages=True,
+        ws_max_retries=10,
+        ws_max_delay=60,
+    )
 
-                        self._processed_messages.add(msg_id)
-                        if len(self._processed_messages) > 10000:
-                            self._processed_messages = set(
-                                list(self._processed_messages)[-5000:]
-                            )
+    # The library's check_version() calls /api/v4/server which only exists
+    # on the admin API (port 4307), not on Bridge (port 4309).
+    # Skip it to avoid 404 errors when connecting via Bridge directly.
+    async def _noop():
+        pass
+    bot.check_version = _noop
 
-                        response = await self.handle_incoming_message(
-                            chat_id=chat_id,
-                            user_id=sender,
-                            message=text,
-                        )
-                        if response:
-                            await self.send_message(chat_id, response)
-
-                retries = 0
-                await asyncio.sleep(self._poll_interval)
-
-            except Exception as e:
-                retries += 1
-                logger.error("TrueConf polling error (attempt %d): %s", retries, e)
-                if retries >= self._max_retries:
-                    logger.critical("TrueConf polling max retries reached, stopping")
-                    break
-                await asyncio.sleep(self._retry_delay)
-
-        self._running = False
-        logger.info("TrueConf bot polling stopped")
-
-    def stop_polling(self):
-        self._running = False
+    return bot
 
 
-trueconf_bot = TrueConfBot()
+async def start_bot():
+    """Start the TrueConf bot with retry logic."""
+    global trueconf_bot
+
+    if not BOT_ENABLED:
+        logger.info("TrueConf bot is not configured, skipping")
+        return
+
+    max_retries = 10
+    retry_delay = 30
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(
+                "TrueConf bot connecting (attempt %d/%d, server=%s, user=%s, https=%s)",
+                attempt, max_retries,
+                settings.TRUECONF_SERVER_ADDRESS,
+                settings.TRUECONF_BOT_USERNAME,
+                settings.TRUECONF_BOT_USE_HTTPS,
+            )
+
+            token = await asyncio.to_thread(
+                _get_token_sync,
+                settings.TRUECONF_SERVER_ADDRESS,
+                settings.TRUECONF_BOT_USERNAME,
+                settings.TRUECONF_BOT_PASSWORD,
+                settings.TRUECONF_BOT_USE_HTTPS,
+                settings.TRUECONF_BOT_WEB_PORT,
+            )
+
+            if not token:
+                raise RuntimeError("Empty token received")
+
+            trueconf_bot = _create_bot(token)
+            logger.info("TrueConf bot authenticated, starting WebSocket...")
+
+            await trueconf_bot.start()
+            await trueconf_bot.run()
+
+        except asyncio.CancelledError:
+            logger.info("TrueConf bot task cancelled")
+            return
+        except Exception as e:
+            logger.error(
+                "TrueConf bot error (attempt %d/%d): %s",
+                attempt, max_retries, e,
+            )
+            if attempt < max_retries:
+                logger.info("Retrying in %ds...", retry_delay)
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.critical("TrueConf bot max retries reached, giving up")
+
+
+def stop_bot():
+    """Signal the bot to stop."""
+    global trueconf_bot
+    if trueconf_bot is not None:
+        try:
+            asyncio.get_event_loop().create_task(trueconf_bot.shutdown())
+        except Exception:
+            pass

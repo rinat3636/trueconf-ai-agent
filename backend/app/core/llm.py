@@ -165,17 +165,26 @@ async def chat_completion(
     raise RuntimeError("No LLM provider configured. Set ANTHROPIC_API_KEY, GROQ_API_KEY, GOOGLE_API_KEY or OPENAI_API_KEY.")
 
 
-async def get_embedding(text: str) -> list[float]:
-    client = get_openai_client()
-    if not client:
-        raise RuntimeError("OpenAI API key required for embeddings. Set OPENAI_API_KEY.")
+_fastembed_model = None
 
+
+def _get_fastembed():
+    global _fastembed_model
+    if _fastembed_model is None:
+        from fastembed import TextEmbedding
+        _fastembed_model = TextEmbedding("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    return _fastembed_model
+
+
+async def get_embedding(text: str) -> list[float]:
     text = text.replace("\n", " ").strip()
     if len(text) > 8000:
         text = text[:8000]
 
-    response = await client.embeddings.create(
-        model=settings.LLM_EMBEDDING_MODEL,
-        input=text,
+    # Use local fastembed (no API key needed)
+    import asyncio
+    model = _get_fastembed()
+    embeddings = await asyncio.to_thread(
+        lambda: list(model.embed([text]))[0].tolist()
     )
-    return response.data[0].embedding
+    return embeddings

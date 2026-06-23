@@ -121,9 +121,13 @@ async def health_check():
         status["status"] = "degraded"
 
     try:
-        from app.services.trueconf_bot import trueconf_bot
-        tc_status = await trueconf_bot.check_connection()
-        status["services"]["trueconf"] = tc_status.get("status", "unknown")
+        from app.services.trueconf_bot import trueconf_bot, BOT_ENABLED
+        if not BOT_ENABLED:
+            status["services"]["trueconf"] = "not configured"
+        elif trueconf_bot is not None:
+            status["services"]["trueconf"] = "connected"
+        else:
+            status["services"]["trueconf"] = "connecting"
     except Exception as e:
         status["services"]["trueconf"] = f"error: {str(e)}"
 
