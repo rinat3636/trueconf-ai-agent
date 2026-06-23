@@ -25,6 +25,7 @@ from app.services.analytics_service import (
     generate_ai_recommendations,
     generate_full_ai_analysis,
     answer_analytics_question,
+    compare_reports,
 )
 from app.services.document_processor import parse_sales_report
 
@@ -115,6 +116,66 @@ async def process_sales_report_background(report_id: int, file_path: str):
             report.summary = "; ".join(summary_parts)
 
             await db.commit()
+
+            # Index sales profiles in Qdrant for RAG search
+            try:
+                from app.services.sales_indexer import index_sales_profiles
+                indexed = await index_sales_profiles(db, report_id)
+                import logging
+                logging.getLogger(__name__).info(
+                    "Indexed %d sales profiles for report %d", indexed, report_id
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to index sales profiles for report %d: %s", report_id, e
+                )
+
+            # Auto-generate training pairs and add as corrections
+            try:
+                from app.services.sales_indexer import generate_training_pairs
+                from app.services.knowledge_service import add_correction_to_vector_db
+                from app.models.knowledge import AnswerCorrection
+
+                pairs = await generate_training_pairs(db, report_id)
+                for pair in pairs:
+                    existing = await db.execute(
+                        select(AnswerCorrection).where(
+                            AnswerCorrection.original_question == pair["question"],
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+                    correction = AnswerCorrection(
+                        original_question=pair["question"],
+                        corrected_answer=pair["answer"],
+                        correction_type="auto_sales",
+                        is_active=True,
+                        priority=80,
+                    )
+                    db.add(correction)
+                    await db.flush()
+                    await db.refresh(correction)
+                    try:
+                        await add_correction_to_vector_db(
+                            correction.id, pair["question"], pair["answer"],
+                            correction_type="auto_sales", priority=80,
+                        )
+                    except Exception:
+                        pass
+                await db.commit()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to generate training pairs for report %d: %s", report_id, e
+                )
+
+            # Invalidate chat cache
+            try:
+                from app.core.redis import delete_cached
+                await delete_cached("chat:*")
+            except Exception:
+                pass
         except Exception as e:
             result = await db.execute(select(SalesReport).where(SalesReport.id == report_id))
             report = result.scalar_one_or_none()
@@ -292,3 +353,83 @@ async def ask_analytics_question(
 ):
     answer = await answer_analytics_question(db, request.question, request.report_id)
     return AnalysisQuestionResponse(answer=answer)
+
+
+@router.get("/reports/compare/{report_id_current}/{report_id_previous}")
+async def compare_two_reports(
+    report_id_current: int,
+    report_id_previous: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare two reports: changes in revenue, profit, clients, products per TP."""
+    for rid in (report_id_current, report_id_previous):
+        result = await db.execute(select(SalesReport).where(SalesReport.id == rid))
+        report = result.scalar_one_or_none()
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Report {rid} not found")
+        if report.status != "processed":
+            raise HTTPException(status_code=400, detail=f"Report {rid} is still processing")
+
+    return await compare_reports(db, report_id_current, report_id_previous)
+
+
+@router.post("/reports/{report_id}/reindex")
+async def reindex_sales_profiles(
+    report_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-index sales profiles in Qdrant and regenerate training pairs."""
+    result = await db.execute(select(SalesReport).where(SalesReport.id == report_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.status != "processed":
+        raise HTTPException(status_code=400, detail="Report is still processing")
+
+    async def _reindex(rid: int):
+        from app.core.database import async_session as _session
+        from app.services.sales_indexer import index_sales_profiles, generate_training_pairs
+        from app.services.knowledge_service import add_correction_to_vector_db
+        from app.models.knowledge import AnswerCorrection
+        import logging
+        _logger = logging.getLogger(__name__)
+        async with _session() as _db:
+            try:
+                indexed = await index_sales_profiles(_db, rid)
+                _logger.info("Re-indexed %d sales profiles for report %d", indexed, rid)
+
+                pairs = await generate_training_pairs(_db, rid)
+                for pair in pairs:
+                    existing = await _db.execute(
+                        select(AnswerCorrection).where(
+                            AnswerCorrection.original_question == pair["question"],
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+                    correction = AnswerCorrection(
+                        original_question=pair["question"],
+                        corrected_answer=pair["answer"],
+                        correction_type="auto_sales",
+                        is_active=True,
+                        priority=80,
+                    )
+                    _db.add(correction)
+                    await _db.flush()
+                    await _db.refresh(correction)
+                    try:
+                        await add_correction_to_vector_db(
+                            correction.id, pair["question"], pair["answer"],
+                            correction_type="auto_sales", priority=80,
+                        )
+                    except Exception:
+                        pass
+                await _db.commit()
+            except Exception as e:
+                _logger.error("Reindex failed for report %d: %s", rid, e)
+
+    background_tasks.add_task(_reindex, report_id)
+    return {"status": "reindexing", "report_id": report_id}
