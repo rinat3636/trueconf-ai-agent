@@ -104,7 +104,7 @@ export default function KnowledgePage() {
   }
 
   const statusLabel = (s) => {
-    const map = { ready: 'Готов', processing: 'Обработка', error: 'Ошибка', pending: 'Ожидание' }
+    const map = { ready: 'Готов', processed: 'Обработан', processing: 'Обработка', error: 'Ошибка', pending: 'Ожидание' }
     return map[s] || s
   }
 
@@ -171,7 +171,7 @@ export default function KnowledgePage() {
                   <tr key={doc.id}>
                     <td><FileText size={14} style={{ marginRight: '0.5rem' }} />{doc.original_filename}</td>
                     <td>{CATEGORIES.find(c => c.value === doc.category)?.label || doc.category || '-'}</td>
-                    <td><span className={`badge badge-${doc.status === 'ready' ? 'success' : doc.status === 'error' ? 'danger' : 'warning'}`}>{statusLabel(doc.status)}</span></td>
+                    <td><span className={`badge badge-${doc.status === 'ready' || doc.status === 'processed' ? 'success' : doc.status === 'error' ? 'danger' : 'warning'}`}>{statusLabel(doc.status)}</span></td>
                     <td>{doc.chunk_count || 0}</td>
                     <td>{new Date(doc.created_at).toLocaleDateString('ru-RU')}</td>
                     <td>
@@ -202,7 +202,7 @@ export default function KnowledgePage() {
                   <tr key={item.id}>
                     <td>{item.title}</td>
                     <td>{CATEGORIES.find(c => c.value === item.category)?.label || item.category || '-'}</td>
-                    <td><span className={`badge badge-${item.is_approved ? 'success' : 'warning'}`}>{item.is_approved ? 'Да' : 'Ожидает'}</span></td>
+                    <td><span className={`badge badge-${item.status === 'approved' ? 'success' : 'warning'}`}>{item.status === 'approved' ? 'Одобрена' : 'Ожидает'}</span></td>
                     <td>v{item.version || 1}</td>
                     <td>{new Date(item.created_at).toLocaleDateString('ru-RU')}</td>
                     <td style={{ display: 'flex', gap: '0.25rem' }}>

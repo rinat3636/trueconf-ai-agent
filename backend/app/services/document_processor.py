@@ -21,7 +21,22 @@ def extract_text_from_pdf(file_path: str) -> str:
         text = page.extract_text()
         if text:
             texts.append(text)
-    return "\n\n".join(texts)
+    result = "\n\n".join(texts)
+    if result.strip():
+        return result
+    # Fallback: OCR for scanned PDFs
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+        images = convert_from_path(file_path, dpi=200)
+        ocr_texts = []
+        for img in images:
+            ocr_text = pytesseract.image_to_string(img, lang='rus+eng')
+            if ocr_text.strip():
+                ocr_texts.append(ocr_text)
+        return "\n\n".join(ocr_texts)
+    except Exception:
+        return result
 
 
 def extract_text_from_docx(file_path: str) -> str:

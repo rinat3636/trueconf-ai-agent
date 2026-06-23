@@ -71,8 +71,8 @@ export default function DashboardPage() {
       {health && (
         <div className="card">
           <h3 style={{ marginBottom: '0.75rem', fontSize: '1rem' }}>Состояние сервисов</h3>
-          <div style={{ display: 'flex', gap: '1rem' }}>
-            {Object.entries(health).filter(([k]) => k !== 'status').map(([key, val]) => (
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+            {Object.entries(health.services || health).filter(([k]) => k !== 'status').map(([key, val]) => (
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{
                   width: 10, height: 10, borderRadius: '50%',
