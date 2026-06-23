@@ -161,6 +161,16 @@ async def get_client_analysis(db: AsyncSession, report_id: int) -> List[Dict[str
     )
     clients = result.scalars().all()
 
+    # Build manager name lookup (parent_id -> manager name)
+    rep_result = await db.execute(
+        select(SalesRecord).where(
+            SalesRecord.report_id == report_id,
+            SalesRecord.level == "rep",
+        )
+    )
+    reps = rep_result.scalars().all()
+    rep_name_map = {r.id: r.name for r in reps}
+
     analysis = []
     for c in clients:
         products_result = await db.execute(
@@ -172,8 +182,11 @@ async def get_client_analysis(db: AsyncSession, report_id: int) -> List[Dict[str
         )
         products = products_result.scalars().all()
 
+        manager_name = rep_name_map.get(c.parent_id, "")
+
         analysis.append({
             "name": c.name,
+            "manager": manager_name,
             "revenue": c.revenue,
             "profit": c.gross_profit,
             "margin": c.margin_pct,
@@ -316,13 +329,23 @@ async def generate_ai_recommendations(analytics: Dict[str, Any]) -> List[str]:
 
 async def generate_full_ai_analysis(db: AsyncSession, report_id: int) -> Dict[str, Any]:
     """Full AI analysis: overview + manager + product + recommendations."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     analytics = await get_sales_analytics(db, report_id)
     if "error" in analytics:
         return analytics
 
-    recommendations = await generate_ai_recommendations(analytics)
     product_analysis = await get_product_analysis(db, report_id)
 
+    # Generate recommendations (first LLM call)
+    try:
+        recommendations = await generate_ai_recommendations(analytics)
+    except Exception as e:
+        logger.error("Failed to generate recommendations: %s", e)
+        recommendations = ["Ошибка генерации рекомендаций. Попробуйте ещё раз."]
+
+    # Generate detailed analysis (second LLM call)
     analytics_text = _format_analytics_for_ai(analytics)
     products_text = ""
     if product_analysis.get("sku_dependencies"):
@@ -330,31 +353,38 @@ async def generate_full_ai_analysis(db: AsyncSession, report_id: int) -> Dict[st
         for dep in product_analysis["sku_dependencies"]:
             products_text += f"  {dep['name']}: {dep['revenue_share_pct']:.1f}% выручки (риск: {dep['risk']})\n"
 
-    detailed_analysis = await chat_completion(
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    'Ты — управленческий аналитик компании ТД "Мир Мороженого".\n'
-                    "Проведи комплексный анализ данных продаж.\n"
-                    "Структурируй ответ по разделам:\n"
-                    "1. Общая оценка\n"
-                    "2. Анализ ТП\n"
-                    "3. Анализ клиентской базы\n"
-                    "4. Анализ ассортимента\n"
-                    "5. Риски и проблемы\n"
-                    "6. Управленческие рекомендации\n"
-                    "Отвечай на русском, конкретно и с цифрами."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Данные:\n{analytics_text}{products_text}",
-            },
-        ],
-        max_tokens=3000,
-        temperature=0.3,
-    )
+    try:
+        detailed_analysis = await chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        'Ты — управленческий аналитик компании ТД "Мир Мороженого".\n'
+                        "Проведи комплексный анализ данных продаж.\n"
+                        "Структурируй ответ по разделам:\n"
+                        "1. Общая оценка\n"
+                        "2. Анализ ТП\n"
+                        "3. Анализ клиентской базы\n"
+                        "4. Анализ ассортимента\n"
+                        "5. Риски и проблемы\n"
+                        "6. Управленческие рекомендации\n"
+                        "Отвечай на русском, конкретно и с цифрами."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Данные:\n{analytics_text}{products_text}",
+                },
+            ],
+            max_tokens=4000,
+            temperature=0.3,
+        )
+    except Exception as e:
+        logger.error("Failed to generate detailed analysis: %s", e)
+        detailed_analysis = (
+            "Ошибка при генерации детального анализа. Попробуйте ещё раз.\n"
+            f"Техническая информация: {str(e)}"
+        )
 
     return {
         "overview": analytics,

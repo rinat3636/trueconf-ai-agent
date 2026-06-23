@@ -20,7 +20,10 @@ export default function SalesPage() {
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [askLoading, setAskLoading] = useState(false)
+  const [clientsPage, setClientsPage] = useState(1)
+  const [productsPage, setProductsPage] = useState(1)
   const fileRef = useRef(null)
+  const PAGE_SIZE = 50
 
   useEffect(() => { loadReports() }, [])
 
@@ -279,7 +282,7 @@ export default function SalesPage() {
                     <table>
                       <thead><tr><th>Клиент</th><th>ТП</th><th>Выручка</th><th>Прибыль</th><th>Маржа</th><th>SKU</th></tr></thead>
                       <tbody>
-                        {clients.slice(0, 50).map((c, i) => (
+                        {clients.slice((clientsPage - 1) * PAGE_SIZE, clientsPage * PAGE_SIZE).map((c, i) => (
                           <tr key={i}>
                             <td>{c.name}</td><td>{c.manager}</td><td>{fmt(c.revenue)}</td>
                             <td>{fmt(c.profit)}</td><td>{fmtPct(c.margin)}</td><td>{c.sku_count}</td>
@@ -287,7 +290,32 @@ export default function SalesPage() {
                         ))}
                       </tbody>
                     </table>
-                    {clients.length > 50 && <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>Показаны первые 50 из {clients.length}</p>}
+                    {clients.length > PAGE_SIZE && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                        <span style={{ color: '#6b7280' }}>
+                          Показаны {(clientsPage - 1) * PAGE_SIZE + 1}–{Math.min(clientsPage * PAGE_SIZE, clients.length)} из {clients.length}
+                        </span>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            onClick={() => setClientsPage(p => Math.max(1, p - 1))}
+                            disabled={clientsPage === 1}
+                            style={{ padding: '0.25rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: clientsPage === 1 ? '#f3f4f6' : '#fff', cursor: clientsPage === 1 ? 'not-allowed' : 'pointer' }}
+                          >
+                            ← Назад
+                          </button>
+                          <span style={{ padding: '0.25rem 0.5rem', color: '#374151' }}>
+                            {clientsPage} / {Math.ceil(clients.length / PAGE_SIZE)}
+                          </span>
+                          <button
+                            onClick={() => setClientsPage(p => Math.min(Math.ceil(clients.length / PAGE_SIZE), p + 1))}
+                            disabled={clientsPage >= Math.ceil(clients.length / PAGE_SIZE)}
+                            style={{ padding: '0.25rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: clientsPage >= Math.ceil(clients.length / PAGE_SIZE) ? '#f3f4f6' : '#fff', cursor: clientsPage >= Math.ceil(clients.length / PAGE_SIZE) ? 'not-allowed' : 'pointer' }}
+                          >
+                            Вперёд →
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -330,7 +358,7 @@ export default function SalesPage() {
                           <table>
                             <thead><tr><th>Продукт</th><th>Выручка</th><th>Прибыль</th><th>Тоннаж</th><th>Маржа</th><th>Доля</th></tr></thead>
                             <tbody>
-                              {(products.products || []).slice(0, 50).map((p, i) => (
+                              {(products.products || []).slice((productsPage - 1) * PAGE_SIZE, productsPage * PAGE_SIZE).map((p, i) => (
                                 <tr key={i}>
                                   <td>{p.name}</td><td>{fmt(p.total_revenue)}</td><td>{fmt(p.total_profit)}</td>
                                   <td>{p.total_tonnage?.toFixed(2) || '-'}</td><td>{fmtPct(p.avg_margin)}</td>
@@ -340,6 +368,32 @@ export default function SalesPage() {
                             </tbody>
                           </table>
                         </div>
+                        {(products.products || []).length > PAGE_SIZE && (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                            <span style={{ color: '#6b7280' }}>
+                              Показаны {(productsPage - 1) * PAGE_SIZE + 1}–{Math.min(productsPage * PAGE_SIZE, (products.products || []).length)} из {(products.products || []).length}
+                            </span>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <button
+                                onClick={() => setProductsPage(p => Math.max(1, p - 1))}
+                                disabled={productsPage === 1}
+                                style={{ padding: '0.25rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: productsPage === 1 ? '#f3f4f6' : '#fff', cursor: productsPage === 1 ? 'not-allowed' : 'pointer' }}
+                              >
+                                ← Назад
+                              </button>
+                              <span style={{ padding: '0.25rem 0.5rem', color: '#374151' }}>
+                                {productsPage} / {Math.ceil((products.products || []).length / PAGE_SIZE)}
+                              </span>
+                              <button
+                                onClick={() => setProductsPage(p => Math.min(Math.ceil((products.products || []).length / PAGE_SIZE), p + 1))}
+                                disabled={productsPage >= Math.ceil((products.products || []).length / PAGE_SIZE)}
+                                style={{ padding: '0.25rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: productsPage >= Math.ceil((products.products || []).length / PAGE_SIZE) ? '#f3f4f6' : '#fff', cursor: productsPage >= Math.ceil((products.products || []).length / PAGE_SIZE) ? 'not-allowed' : 'pointer' }}
+                              >
+                                Вперёд →
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>
                           Всего уникальных SKU: {products.total_unique_skus || 0}
                         </p>
