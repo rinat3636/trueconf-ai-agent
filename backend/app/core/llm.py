@@ -172,7 +172,7 @@ def _get_fastembed():
     global _fastembed_model
     if _fastembed_model is None:
         from fastembed import TextEmbedding
-        _fastembed_model = TextEmbedding("BAAI/bge-small-en-v1.5")
+        _fastembed_model = TextEmbedding("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     return _fastembed_model
 
 
