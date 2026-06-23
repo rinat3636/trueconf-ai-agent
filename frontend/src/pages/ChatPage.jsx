@@ -62,7 +62,6 @@ export default function ChatPage() {
   const handleSuggestion = (text) => {
     setInput(text)
     setTimeout(() => {
-      const fakeEvent = { preventDefault: () => {} }
       setInput('')
       const userMsg = { role: 'user', content: text, id: Date.now() }
       setMessages(prev => [...prev, userMsg])
