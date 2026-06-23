@@ -19,6 +19,9 @@ redis[hiredis]==5.2.1
 # Vector DB
 qdrant-client==1.12.1
 
+# Embeddings (local, no API key needed)
+fastembed==0.4.1
+
 # LLM
 openai==1.58.1
 

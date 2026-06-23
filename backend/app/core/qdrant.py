@@ -7,7 +7,7 @@ from app.core.config import settings
 
 KNOWLEDGE_COLLECTION = "knowledge_base"
 CORRECTIONS_COLLECTION = "answer_corrections"
-VECTOR_SIZE = 1536
+VECTOR_SIZE = 384  # fastembed BAAI/bge-small-en-v1.5
 
 _client: Optional[QdrantClient] = None
 
