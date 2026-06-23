@@ -21,6 +21,9 @@ async def ask_question(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if len(request.message) > 5000:
+        raise HTTPException(status_code=400, detail="Message too long (max 5000 characters)")
+
     if request.session_id:
         result = await db.execute(select(ChatSession).where(ChatSession.id == request.session_id))
         session = result.scalar_one_or_none()

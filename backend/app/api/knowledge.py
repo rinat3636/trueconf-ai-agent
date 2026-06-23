@@ -204,6 +204,10 @@ async def create_knowledge_item(
         knowledge.category, knowledge.priority,
     )
 
+    # Invalidate chat cache
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
+
     await log_action(
         db, "create_knowledge", user_id=current_user.id,
         entity_type="knowledge_item", entity_id=knowledge.id,
@@ -249,6 +253,10 @@ async def update_knowledge_item(
         knowledge.category, knowledge.priority,
     )
 
+    # Invalidate chat cache
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
+
     await log_action(
         db, "update_knowledge", user_id=current_user.id,
         entity_type="knowledge_item", entity_id=knowledge.id,
@@ -268,6 +276,20 @@ async def delete_knowledge_item(
         raise HTTPException(status_code=404, detail="Knowledge item not found")
 
     knowledge.status = "archived"
+
+    # Remove from Qdrant vector DB
+    from app.core.qdrant import delete_vectors, KNOWLEDGE_COLLECTION
+    import uuid
+    try:
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"knowledge_{item_id}"))
+        delete_vectors(KNOWLEDGE_COLLECTION, [point_id])
+    except Exception:
+        pass
+
+    # Invalidate chat cache
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
+
     await log_action(
         db, "delete_knowledge", user_id=current_user.id,
         entity_type="knowledge_item", entity_id=knowledge.id,

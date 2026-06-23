@@ -84,6 +84,16 @@ async def change_password(
         raise HTTPException(status_code=400, detail="Incorrect old password")
 
     current_user.hashed_password = get_password_hash(data.new_password)
+
+    # Blacklist all existing tokens for this user
+    from app.core.redis import get_redis
+    redis = await get_redis()
+    await redis.set(
+        f"token_blacklist:user:{current_user.id}",
+        datetime.now(timezone.utc).isoformat(),
+        ex=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+    )
+
     await log_action(db, "change_password", user_id=current_user.id)
     return {"status": "ok"}
 

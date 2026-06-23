@@ -36,6 +36,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
 
+        # Prefer user identity from JWT over IP for rate limiting
+        identity = client_ip
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            try:
+                from jose import jwt as jose_jwt
+                from app.core.config import settings
+                token = auth_header[7:]
+                payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+                user_id = payload.get("sub")
+                if user_id:
+                    identity = f"user:{user_id}"
+            except Exception:
+                pass
+
         limit, window = DEFAULT_LIMIT
         for prefix, (l, w) in RATE_LIMITS.items():
             if path.startswith(prefix):
@@ -44,7 +59,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         try:
             redis = await get_redis()
-            key = f"rate:{client_ip}:{path}"
+            key = f"rate:{identity}:{path}"
 
             current = await redis.get(key)
             if current and int(current) >= limit:

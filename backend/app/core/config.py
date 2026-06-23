@@ -17,20 +17,16 @@ class Settings(BaseSettings):
     QDRANT_URL: str = "http://localhost:6333"
 
     # JWT
-    SECRET_KEY: str = "change-me-in-production-use-strong-secret-key"
+    SECRET_KEY: str = "change-me-in-production-use-strong-secret-key"  # overridden by .env
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # LLM
-    GROQ_API_KEY: str = ""
-    OPENAI_API_KEY: str = ""
-    GOOGLE_API_KEY: str = ""
+    # LLM (Anthropic Claude only)
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_BASE_URL: str = "https://api.cheat-ai.shop/v1"
-    LLM_PROVIDER: str = "anthropic"  # "anthropic", "groq", "google", "openai"
+    LLM_PROVIDER: str = "anthropic"
     LLM_CHAT_MODEL: str = "claude-sonnet-4-20250514"
-    LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # TrueConf Chatbot (via python-trueconf-bot / WebSocket API)
     TRUECONF_SERVER_ADDRESS: str = ""  # IP or FQDN, e.g. "192.168.1.158"

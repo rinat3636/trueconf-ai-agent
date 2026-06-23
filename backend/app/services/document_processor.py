@@ -35,7 +35,8 @@ def extract_text_from_pdf(file_path: str) -> str:
             if ocr_text.strip():
                 ocr_texts.append(ocr_text)
         return "\n\n".join(ocr_texts)
-    except Exception:
+    except Exception as e:
+        logger.warning("OCR fallback failed for %s: %s", file_path, e)
         return result
 
 

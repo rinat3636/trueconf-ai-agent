@@ -8,8 +8,8 @@ engine = create_async_engine(
     echo=settings.DEBUG,
     pool_size=10,
     max_overflow=20,
-    pool_recycle=3600,
-    pool_pre_ping=False,
+    pool_recycle=1800,
+    pool_pre_ping=False,  # aiomysql doesn't support async pre_ping; use pool_recycle instead
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

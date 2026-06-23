@@ -157,6 +157,13 @@ async def process_document_pipeline(
         doc.processed_at = datetime.now(timezone.utc)
         await db.commit()
 
+        # Invalidate chat cache after new knowledge is added
+        try:
+            from app.core.redis import delete_cached
+            await delete_cached("chat:*")
+        except Exception:
+            pass
+
         logger.info(
             f"Document {document_id} processed: {doc.chunk_count} chunks, "
             f"{len(knowledge_items)} knowledge items extracted"
