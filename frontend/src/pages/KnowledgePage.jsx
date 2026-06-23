@@ -202,7 +202,7 @@ export default function KnowledgePage() {
                   <tr key={item.id}>
                     <td>{item.title}</td>
                     <td>{CATEGORIES.find(c => c.value === item.category)?.label || item.category || '-'}</td>
-                    <td><span className={`badge badge-${item.is_approved ? 'success' : 'warning'}`}>{item.is_approved ? 'Да' : 'Ожидает'}</span></td>
+                    <td><span className={`badge badge-${item.status === 'approved' ? 'success' : 'warning'}`}>{item.status === 'approved' ? 'Одобрена' : 'Ожидает'}</span></td>
                     <td>v{item.version || 1}</td>
                     <td>{new Date(item.created_at).toLocaleDateString('ru-RU')}</td>
                     <td style={{ display: 'flex', gap: '0.25rem' }}>
