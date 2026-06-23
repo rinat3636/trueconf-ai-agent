@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-libmysqlclient-dev \
     pkg-config \
     libmagic1 \
+    tesseract-ocr \
+    tesseract-ocr-rus \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
