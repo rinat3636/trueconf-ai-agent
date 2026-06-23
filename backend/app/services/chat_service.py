@@ -32,6 +32,7 @@ from app.services.analytics_service import (
     get_product_analysis,
     _format_analytics_for_ai,
 )
+from app.services.sales_context import build_smart_sales_context
 
 logger = logging.getLogger(__name__)
 
@@ -272,24 +273,14 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
             )
             report = latest_report.scalar_one_or_none()
             if report:
-                analytics = await get_sales_analytics(db, report.id)
-                if "error" not in analytics:
-                    sales_context = _format_analytics_for_ai(analytics)
-                    product_data = await get_product_analysis(db, report.id)
-                    if product_data.get("products"):
-                        sales_context += "\n\nТоп-10 продуктов по выручке:\n"
-                        for p in product_data["products"][:10]:
-                            sales_context += (
-                                f"  {p['name']}: выручка {p['total_revenue']:,.0f}, "
-                                f"маржа {p['avg_margin']:.1f}%, доля {p['revenue_share_pct']:.1f}%\n"
-                            )
-                    if product_data.get("sku_dependencies"):
-                        sales_context += "\nЗависимость от SKU:\n"
-                        for dep in product_data["sku_dependencies"]:
-                            sales_context += f"  {dep['name']}: {dep['revenue_share_pct']:.1f}% выручки (риск: {dep['risk']})\n"
-                    if len(sales_context) > 4000:
-                        sales_context = sales_context[:4000]
-                    trace["pipeline"]["sales_data"] = {"loaded": True, "report_id": report.id}
+                sales_context, sales_trace = await build_smart_sales_context(
+                    question, db, report.id
+                )
+                trace["pipeline"]["sales_data"] = {
+                    "loaded": True,
+                    "report_id": report.id,
+                    **sales_trace,
+                }
         except Exception as e:
             logger.warning("Failed to load sales data: %s", e)
             trace["pipeline"]["sales_data"] = {"loaded": False, "error": str(e)}
