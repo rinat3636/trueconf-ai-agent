@@ -41,8 +41,8 @@ export default function MonitoringPage() {
       {health && (
         <div className="card" style={{ marginBottom: '1.5rem' }}>
           <h3 style={{ marginBottom: '0.75rem', fontSize: '1rem' }}>Здоровье сервисов</h3>
-          <div style={{ display: 'flex', gap: '1.5rem' }}>
-            {Object.entries(health).filter(([k]) => k !== 'status').map(([key, val]) => (
+          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+            {Object.entries(health.services || health).filter(([k]) => k !== 'status').map(([key, val]) => (
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{
                   width: 12, height: 12, borderRadius: '50%',
