@@ -5,10 +5,10 @@ Uses the TrueConf Chatbot Connector API (WebSocket on port 4309).
 Requires a dedicated user account on TrueConf Server.
 
 Handles:
-  - WebSocket connection + auto-reconnect
+  - Token acquisition (HTTP or HTTPS, configurable port)
+  - WebSocket connection + auto-reconnect with retry
   - Incoming messages → RAG pipeline → response
   - User mapping: TrueConf ID → users.trueconf_id
-  - Markdown formatting support
 """
 
 import asyncio
@@ -16,6 +16,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,9 @@ BOT_ENABLED = bool(
     and settings.TRUECONF_BOT_USERNAME
     and settings.TRUECONF_BOT_PASSWORD
 )
+
+# Module-level reference, initialized lazily in start_bot()
+trueconf_bot = None
 
 
 async def _get_or_create_user(db: AsyncSession, trueconf_id: str) -> Optional[User]:
@@ -129,17 +133,44 @@ async def handle_incoming_message(
         return answer_data["answer"]
 
 
-def _create_bot():
-    """Create TrueConf Bot instance using the official library."""
-    if not BOT_ENABLED:
-        return None
+def _get_token_sync(
+    server: str,
+    username: str,
+    password: str,
+    use_https: bool,
+    port: int,
+) -> Optional[str]:
+    """
+    Get OAuth2 token from Bridge API.
 
-    try:
-        from trueconf import Bot, Dispatcher, Router, Message, F
-        from trueconf.enums import ParseMode
-    except ImportError:
-        logger.error("python-trueconf-bot not installed. Run: pip install python-trueconf-bot")
-        return None
+    The official library's _get_auth_token always uses HTTPS:443.
+    This function supports HTTP:4309 for local network deployments.
+    """
+    protocol = "https" if use_https else "http"
+    if port == 0:
+        port = 443 if use_https else 4309
+    url = f"{protocol}://{server}:{port}/bridge/api/client/v1/oauth/token"
+
+    logger.info("Requesting token from %s for user=%s", url, username)
+
+    with httpx.Client(timeout=10.0, verify=False) as client:
+        resp = client.post(url, json={
+            "client_id": "chat_bot",
+            "grant_type": "password",
+            "username": username,
+            "password": password,
+        })
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+        if token:
+            logger.info("Token obtained successfully for user=%s", username)
+        return token
+
+
+def _create_bot(token: str):
+    """Create Bot instance with pre-acquired token."""
+    from trueconf import Bot, Dispatcher, Router, Message, F
+    from trueconf.enums import ParseMode
 
     router = Router(name="ai_agent")
     dp = Dispatcher()
@@ -147,7 +178,6 @@ def _create_bot():
 
     @router.message(F.text)
     async def on_text_message(message: Message):
-        """Handle incoming text messages."""
         sender_id = message.from_user.id if message.from_user else ""
         chat_id = message.chat_id or ""
         text = message.text or ""
@@ -175,14 +205,16 @@ def _create_bot():
                 except Exception as e:
                     logger.error("Failed to send response: %s", e)
 
-    bot = Bot.from_credentials(
+    use_https = settings.TRUECONF_BOT_USE_HTTPS
+    web_port = settings.TRUECONF_BOT_WEB_PORT or None
+
+    bot = Bot(
         server=settings.TRUECONF_SERVER_ADDRESS,
-        username=settings.TRUECONF_BOT_USERNAME,
-        password=settings.TRUECONF_BOT_PASSWORD,
+        token=token,
         dispatcher=dp,
         verify_ssl=False,
-        https=settings.TRUECONF_BOT_USE_HTTPS,
-        web_port=settings.TRUECONF_BOT_WEB_PORT or None,
+        https=use_https,
+        web_port=web_port,
         receive_unread_messages=True,
         skip_self_messages=True,
         ws_max_retries=10,
@@ -192,33 +224,63 @@ def _create_bot():
     return bot
 
 
-# Module-level bot instance
-trueconf_bot = _create_bot()
-
-
 async def start_bot():
-    """Start the TrueConf bot (WebSocket connection)."""
-    if trueconf_bot is None:
+    """Start the TrueConf bot with retry logic."""
+    global trueconf_bot
+
+    if not BOT_ENABLED:
         logger.info("TrueConf bot is not configured, skipping")
         return
 
-    logger.info(
-        "Starting TrueConf bot (server=%s, user=%s, https=%s)",
-        settings.TRUECONF_SERVER_ADDRESS,
-        settings.TRUECONF_BOT_USERNAME,
-        settings.TRUECONF_BOT_USE_HTTPS,
-    )
+    max_retries = 10
+    retry_delay = 30
 
-    try:
-        await trueconf_bot.start()
-        await trueconf_bot.run()
-    except Exception as e:
-        logger.error("TrueConf bot error: %s", e)
-        raise
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(
+                "TrueConf bot connecting (attempt %d/%d, server=%s, user=%s, https=%s)",
+                attempt, max_retries,
+                settings.TRUECONF_SERVER_ADDRESS,
+                settings.TRUECONF_BOT_USERNAME,
+                settings.TRUECONF_BOT_USE_HTTPS,
+            )
+
+            token = await asyncio.to_thread(
+                _get_token_sync,
+                settings.TRUECONF_SERVER_ADDRESS,
+                settings.TRUECONF_BOT_USERNAME,
+                settings.TRUECONF_BOT_PASSWORD,
+                settings.TRUECONF_BOT_USE_HTTPS,
+                settings.TRUECONF_BOT_WEB_PORT,
+            )
+
+            if not token:
+                raise RuntimeError("Empty token received")
+
+            trueconf_bot = _create_bot(token)
+            logger.info("TrueConf bot authenticated, starting WebSocket...")
+
+            await trueconf_bot.start()
+            await trueconf_bot.run()
+
+        except asyncio.CancelledError:
+            logger.info("TrueConf bot task cancelled")
+            return
+        except Exception as e:
+            logger.error(
+                "TrueConf bot error (attempt %d/%d): %s",
+                attempt, max_retries, e,
+            )
+            if attempt < max_retries:
+                logger.info("Retrying in %ds...", retry_delay)
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.critical("TrueConf bot max retries reached, giving up")
 
 
 def stop_bot():
     """Signal the bot to stop."""
+    global trueconf_bot
     if trueconf_bot is not None:
         try:
             asyncio.get_event_loop().create_task(trueconf_bot.shutdown())

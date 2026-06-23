@@ -122,10 +122,12 @@ async def health_check():
 
     try:
         from app.services.trueconf_bot import trueconf_bot, BOT_ENABLED
-        if trueconf_bot is not None:
-            status["services"]["trueconf"] = "connected" if BOT_ENABLED else "disabled"
-        else:
+        if not BOT_ENABLED:
             status["services"]["trueconf"] = "not configured"
+        elif trueconf_bot is not None:
+            status["services"]["trueconf"] = "connected"
+        else:
+            status["services"]["trueconf"] = "connecting"
     except Exception as e:
         status["services"]["trueconf"] = f"error: {str(e)}"
 
