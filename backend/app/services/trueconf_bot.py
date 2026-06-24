@@ -13,17 +13,21 @@ Handles:
 
 import asyncio
 import logging
+import os
+import uuid
 from typing import Optional
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.config import settings, UPLOAD_DIR
 from app.core.database import async_session
 from app.models.user import User
 from app.models.chat import ChatSession, ChatMessage
+from app.models.knowledge import Document as DocModel
 
 logger = logging.getLogger(__name__)
 
@@ -181,10 +185,185 @@ def _get_token_sync(
         return token
 
 
+async def _process_trueconf_file(message, sender_id: str, doc):
+    """Download a file from TrueConf and process it into the knowledge base."""
+    from app.services.self_learning import process_document_pipeline
+
+    try:
+        unique_name = f"{uuid.uuid4()}{os.path.splitext(doc.file_name or '')[1]}"
+        dest_dir = UPLOAD_DIR / "documents"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / unique_name
+
+        downloaded = await message.bot.download_file_by_id(doc.file_id, str(dest_path))
+        if not downloaded:
+            logger.warning("Failed to download file %s from TrueConf", doc.file_name)
+            try:
+                await message.answer(text="❌ Не удалось скачать файл.")
+            except Exception:
+                pass
+            return
+
+        file_size = dest_path.stat().st_size if dest_path.exists() else 0
+
+        async with async_session() as db:
+            user = await _get_or_create_user(db, sender_id)
+            user_id = user.id if user else None
+
+            db_doc = DocModel(
+                filename=unique_name,
+                original_filename=doc.file_name or unique_name,
+                file_type=os.path.splitext(doc.file_name or "")[1].lstrip(".").lower(),
+                file_size=file_size,
+                file_path=str(dest_path),
+                status="processing",
+                uploaded_by=user_id or 1,
+            )
+            db.add(db_doc)
+            await db.commit()
+            await db.refresh(db_doc)
+            doc_id = db_doc.id
+
+        async with async_session() as db:
+            await process_document_pipeline(doc_id, str(dest_path), db, user_id=user_id)
+
+        logger.info("TrueConf file processed: %s (doc_id=%d)", doc.file_name, doc_id)
+        try:
+            await message.answer(
+                text=f"✅ Файл \"{doc.file_name}\" обработан и добавлен в базу знаний."
+            )
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.error("Error processing TrueConf file %s: %s", doc.file_name, e)
+        try:
+            await message.answer(text=f"❌ Ошибка обработки файла: {str(e)[:200]}")
+        except Exception:
+            pass
+
+
+async def _try_learn_from_chat(sender_id: str, message_text: str):
+    """Evaluate if a chat message contains useful knowledge and extract it."""
+    from app.core.llm import light_completion
+    from app.models.knowledge import KnowledgeItem, ModerationQueue
+
+    if len(message_text) < 50:
+        return
+
+    try:
+        evaluation = await light_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты — фильтр полезности для корпоративной базы знаний "
+                        "компании-дистрибьютора мороженого ТД \"Мир Мороженого\".\n"
+                        "Определи, содержит ли сообщение ПОЛЕЗНУЮ бизнес-информацию, "
+                        "которую стоит сохранить в базу знаний.\n\n"
+                        "ПОЛЕЗНО: факты о продукции, ценах, клиентах, процедурах, "
+                        "правилах работы, логистике, контактах, методологиях продаж.\n"
+                        "НЕ ПОЛЕЗНО: приветствия, вопросы, жалобы, личные сообщения, "
+                        "команды боту, общие фразы, обсуждение погоды и т.п.\n\n"
+                        "Ответь СТРОГО одним словом: ПОЛЕЗНО или БЕСПОЛЕЗНО"
+                    ),
+                },
+                {"role": "user", "content": message_text},
+            ],
+            max_tokens=10,
+        )
+
+        if "ПОЛЕЗНО" not in evaluation.upper():
+            return
+
+        # Extract knowledge from the useful message
+        knowledge_text = await light_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Извлеки из сообщения ключевую бизнес-информацию в формате:\n"
+                        "ЗАГОЛОВОК: [краткий заголовок]\n"
+                        "КАТЕГОРИЯ: [product_catalog|logistics|policy|commercial|"
+                        "contacts|sales_methodology|product_knowledge|general]\n"
+                        "СОДЕРЖАНИЕ: [полная информация, переформулированная как "
+                        "самостоятельный факт для базы знаний]\n\n"
+                        "Если сообщение содержит несколько фактов, выдели каждый отдельно "
+                        "через ---"
+                    ),
+                },
+                {"role": "user", "content": message_text},
+            ],
+            max_tokens=1000,
+        )
+
+        items = _parse_chat_knowledge(knowledge_text)
+        if not items:
+            return
+
+        async with async_session() as db:
+            for item in items:
+                mod_entry = ModerationQueue(
+                    item_type="chat_learned",
+                    item_id=0,
+                    action="add_from_trueconf_chat",
+                    payload={
+                        "title": item["title"],
+                        "content": item["content"],
+                        "category": item["category"],
+                        "source_user": sender_id,
+                        "source_text": message_text[:500],
+                    },
+                    status="pending",
+                )
+                db.add(mod_entry)
+            await db.commit()
+
+        logger.info(
+            "Extracted %d knowledge items from TrueConf chat (user=%s)",
+            len(items), sender_id,
+        )
+
+    except Exception as e:
+        logger.debug("Chat learning evaluation failed: %s", e)
+
+
+def _parse_chat_knowledge(text: str) -> list:
+    """Parse LLM-extracted knowledge from chat message."""
+    VALID_CATEGORIES = {
+        "product_catalog", "logistics", "policy", "commercial",
+        "contacts", "sales_methodology", "product_knowledge", "general",
+    }
+    items = []
+    for block in text.split("---"):
+        block = block.strip()
+        if not block:
+            continue
+        title = ""
+        category = "general"
+        content = ""
+        for line in block.split("\n"):
+            line = line.strip()
+            if line.upper().startswith("ЗАГОЛОВОК:"):
+                title = line.split(":", 1)[1].strip()
+            elif line.upper().startswith("КАТЕГОРИЯ:"):
+                cat = line.split(":", 1)[1].strip().lower()
+                if cat in VALID_CATEGORIES:
+                    category = cat
+            elif line.upper().startswith("СОДЕРЖАНИЕ:"):
+                content = line.split(":", 1)[1].strip()
+            elif content:
+                content += "\n" + line
+        if title and content and len(content) >= 20:
+            items.append({"title": title, "content": content, "category": category})
+    return items
+
+
 def _create_bot(token: str = None, use_credentials: bool = False):
     """Create Bot instance with pre-acquired token or credentials."""
     from trueconf import Bot, Dispatcher, Router, Message, F
     from trueconf.enums import ParseMode
+    from trueconf.types.message import MessageType
 
     router = Router(name="ai_agent")
     dp = Dispatcher()
@@ -234,6 +413,38 @@ def _create_bot(token: str = None, use_credentials: bool = False):
                     await message.answer(text=response)
                 except Exception as e:
                     logger.error("Failed to send response: %s", e)
+
+        # After responding, try to extract useful knowledge from the conversation
+        asyncio.create_task(_try_learn_from_chat(sender_id, stripped))
+
+    @router.message(F.content_type.is_(MessageType.ATTACHMENT))
+    async def on_file_message(message: Message):
+        """Handle file attachments: download and process into knowledge base."""
+        sender_id = message.from_user.id if message.from_user else ""
+        chat_id = message.chat_id or ""
+        doc = message.document
+        if not doc:
+            return
+
+        ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".csv"}
+        file_ext = os.path.splitext(doc.file_name or "")[1].lower()
+        if file_ext not in ALLOWED_EXTENSIONS:
+            logger.info("Skipping unsupported file type: %s", doc.file_name)
+            return
+
+        logger.info(
+            "TrueConf file from %s in chat %s: %s (%s bytes)",
+            sender_id, chat_id, doc.file_name, doc.file_size,
+        )
+
+        try:
+            await message.answer(text="📄 Получил файл, обрабатываю...")
+        except Exception:
+            pass
+
+        asyncio.create_task(
+            _process_trueconf_file(message, sender_id, doc)
+        )
 
     use_https = settings.TRUECONF_BOT_USE_HTTPS
     web_port = settings.TRUECONF_BOT_WEB_PORT or None
