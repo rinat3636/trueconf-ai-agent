@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, BookOpen, GraduationCap, Shield,
   BarChart3, Activity, Users, LogOut, LayoutDashboard,
-  AlertTriangle, FileSearch, ClipboardList, X
+  AlertTriangle, FileSearch, ClipboardList, X, Bot
 } from 'lucide-react'
 
 const ROLE_LABELS = {
@@ -65,6 +65,7 @@ export default function Sidebar({ user, setUser, isOpen, onClose }) {
 
           <div className="sidebar-section">Система</div>
           <ul className="sidebar-nav">
+            <li><NavLink to="/bot-settings"><Bot size={18} /> Настройки бота</NavLink></li>
             <li><NavLink to="/monitoring"><Activity size={18} /> Мониторинг</NavLink></li>
             <li><NavLink to="/audit"><ClipboardList size={18} /> Аудит</NavLink></li>
             {isSuperAdmin && (

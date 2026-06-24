@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Index
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Index, JSON
 
 from app.core.database import Base
 
@@ -15,6 +15,7 @@ class User(Base):
     role = Column(String(20), nullable=False, default="employee")  # super_admin, admin, manager, employee
     trueconf_id = Column(String(255), unique=True, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    permissions = Column(JSON, default=dict, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     last_login = Column(DateTime, nullable=True)

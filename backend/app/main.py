@@ -213,12 +213,14 @@ from app.api.chat import router as chat_router
 from app.api.knowledge import router as knowledge_router
 from app.api.analytics import router as analytics_router
 from app.api.monitoring import router as monitoring_router
+from app.api.settings import router as settings_router
 
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(knowledge_router)
 app.include_router(analytics_router)
 app.include_router(monitoring_router)
+app.include_router(settings_router)
 
 
 @app.get("/")

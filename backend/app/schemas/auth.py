@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 
@@ -9,6 +9,7 @@ class UserCreate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     role: str = "employee"
+    permissions: Optional[Dict[str, Any]] = None
 
 
 class UserLogin(BaseModel):
@@ -21,6 +22,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    permissions: Optional[Dict[str, Any]] = None
 
 
 class ChangePassword(BaseModel):
@@ -36,6 +38,7 @@ class UserResponse(BaseModel):
     role: str
     trueconf_id: Optional[str] = None
     is_active: bool
+    permissions: Optional[Dict[str, Any]] = None
     created_at: datetime
 
     class Config:

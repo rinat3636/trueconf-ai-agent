@@ -141,9 +141,12 @@ async def process_document_pipeline(
             try:
                 conflicts = await run_conflict_detection(ki_data["content"], new_item_id=ki.id)
                 for conflict_data in conflicts:
+                    existing_id = conflict_data.get("existing_item_id")
+                    if existing_id is None:
+                        continue
                     conflict = KnowledgeConflict(
                         new_item_id=ki.id,
-                        existing_item_id=conflict_data.get("existing_item_id"),
+                        existing_item_id=existing_id,
                         conflict_type=conflict_data["conflict_type"],
                         similarity_score=conflict_data.get("similarity_score", 0.0),
                         resolution="pending",

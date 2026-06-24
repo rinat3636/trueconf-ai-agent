@@ -33,7 +33,7 @@ async function request(url, options = {}) {
 export const api = {
   // Auth
   login: (data) => request('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
-  register: (data) => request('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+  register: (data) => request('/auth/users', { method: 'POST', body: JSON.stringify(data) }),
   getMe: () => request('/auth/me'),
   getUsers: () => request('/auth/users'),
 
@@ -129,6 +129,13 @@ export const api = {
   askAnalytics: (data) => request('/analytics/ask', { method: 'POST', body: JSON.stringify(data) }),
   compareReports: (currentId, previousId) => request(`/analytics/reports/compare/${currentId}/${previousId}`),
   reindexReport: (id) => request(`/analytics/reports/${id}/reindex`, { method: 'POST' }),
+
+  // Settings
+  getBotSettings: () => request('/settings/bot'),
+  updateBotSettings: (data) => request('/settings/bot', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Users
+  updateUser: (id, data) => request(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Monitoring
   getStats: () => request('/monitoring/stats'),

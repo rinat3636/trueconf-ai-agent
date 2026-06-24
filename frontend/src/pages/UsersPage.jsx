@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Edit2, Save, X } from 'lucide-react'
 import { api } from '../services/api'
 
 const ROLES = [
@@ -16,10 +16,33 @@ const ROLE_BADGE = {
   employee: 'success',
 }
 
+const PERMISSION_OPTIONS = [
+  { key: 'chat', label: 'Чат с ИИ', description: 'Доступ к чату с ИИ-ассистентом' },
+  { key: 'knowledge_view', label: 'Просмотр базы знаний', description: 'Просмотр документов и записей знаний' },
+  { key: 'knowledge_edit', label: 'Редактирование базы знаний', description: 'Добавление и изменение документов' },
+  { key: 'sales_view', label: 'Аналитика продаж', description: 'Просмотр отчётов продаж' },
+  { key: 'sales_upload', label: 'Загрузка отчётов', description: 'Загрузка новых отчётов продаж' },
+  { key: 'moderation', label: 'Модерация', description: 'Модерация знаний и конфликтов' },
+  { key: 'user_management', label: 'Управление пользователями', description: 'Создание и редактирование пользователей' },
+  { key: 'bot_settings', label: 'Настройки бота', description: 'Изменение настроек чат-бота' },
+  { key: 'trueconf_chat', label: 'Чат в TrueConf', description: 'Общение с ботом через TrueConf' },
+]
+
+const DEFAULT_PERMISSIONS_BY_ROLE = {
+  super_admin: PERMISSION_OPTIONS.reduce((acc, p) => ({ ...acc, [p.key]: true }), {}),
+  admin: { chat: true, knowledge_view: true, knowledge_edit: true, sales_view: true, sales_upload: true, moderation: true, bot_settings: true, trueconf_chat: true, user_management: false },
+  manager: { chat: true, knowledge_view: true, knowledge_edit: false, sales_view: true, sales_upload: true, moderation: false, bot_settings: false, trueconf_chat: true, user_management: false },
+  employee: { chat: true, knowledge_view: false, knowledge_edit: false, sales_view: false, sales_upload: false, moderation: false, bot_settings: false, trueconf_chat: true, user_management: false },
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState([])
   const [showModal, setShowModal] = useState(false)
-  const [newUser, setNewUser] = useState({ username: '', password: '', full_name: '', email: '', role: 'employee' })
+  const [editingUser, setEditingUser] = useState(null)
+  const [newUser, setNewUser] = useState({
+    username: '', password: '', full_name: '', email: '', role: 'employee',
+    permissions: { ...DEFAULT_PERMISSIONS_BY_ROLE.employee },
+  })
 
   useEffect(() => { loadUsers() }, [])
 
@@ -30,14 +53,81 @@ export default function UsersPage() {
     } catch (err) { console.error(err) }
   }
 
+  const handleRoleChange = (role) => {
+    const defaults = DEFAULT_PERMISSIONS_BY_ROLE[role] || DEFAULT_PERMISSIONS_BY_ROLE.employee
+    if (editingUser) {
+      setEditingUser({ ...editingUser, role, permissions: { ...defaults } })
+    } else {
+      setNewUser({ ...newUser, role, permissions: { ...defaults } })
+    }
+  }
+
+  const togglePermission = (key) => {
+    if (editingUser) {
+      const perms = { ...(editingUser.permissions || {}) }
+      perms[key] = !perms[key]
+      setEditingUser({ ...editingUser, permissions: perms })
+    } else {
+      const perms = { ...(newUser.permissions || {}) }
+      perms[key] = !perms[key]
+      setNewUser({ ...newUser, permissions: perms })
+    }
+  }
+
   const handleCreate = async () => {
     try {
       await api.register(newUser)
       setShowModal(false)
-      setNewUser({ username: '', password: '', full_name: '', email: '', role: 'employee' })
+      setNewUser({
+        username: '', password: '', full_name: '', email: '', role: 'employee',
+        permissions: { ...DEFAULT_PERMISSIONS_BY_ROLE.employee },
+      })
       loadUsers()
     } catch (err) { alert('Ошибка: ' + err.message) }
   }
+
+  const handleEdit = (user) => {
+    setEditingUser({
+      ...user,
+      permissions: user.permissions || DEFAULT_PERMISSIONS_BY_ROLE[user.role] || {},
+    })
+  }
+
+  const handleSaveEdit = async () => {
+    try {
+      await api.updateUser(editingUser.id, {
+        full_name: editingUser.full_name,
+        email: editingUser.email,
+        role: editingUser.role,
+        is_active: editingUser.is_active,
+        permissions: editingUser.permissions,
+      })
+      setEditingUser(null)
+      loadUsers()
+    } catch (err) { alert('Ошибка: ' + err.message) }
+  }
+
+  const currentData = editingUser || newUser
+  const currentPerms = currentData.permissions || {}
+
+  const renderPermissionsBlock = () => (
+    <div className="form-group">
+      <label style={{ marginBottom: '0.5rem', display: 'block' }}>Возможности пользователя</label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+        {PERMISSION_OPTIONS.map(p => (
+          <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+            <input
+              type="checkbox"
+              checked={!!currentPerms[p.key]}
+              onChange={() => togglePermission(p.key)}
+            />
+            <span>{p.label}</span>
+            <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>— {p.description}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
 
   return (
     <div>
@@ -65,6 +155,7 @@ export default function UsersPage() {
                 <th>Активен</th>
                 <th>TrueConf ID</th>
                 <th>Создан</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -81,6 +172,11 @@ export default function UsersPage() {
                   <td><span className={`badge badge-${u.is_active ? 'success' : 'danger'}`}>{u.is_active ? 'Да' : 'Нет'}</span></td>
                   <td>{u.trueconf_id || '-'}</td>
                   <td>{new Date(u.created_at).toLocaleDateString('ru-RU')}</td>
+                  <td>
+                    <button className="btn btn-outline btn-sm" onClick={() => handleEdit(u)} title="Редактировать">
+                      <Edit2 size={14} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -88,9 +184,10 @@ export default function UsersPage() {
         </div>
       </div>
 
+      {/* Create User Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 550 }}>
             <h3 className="modal-title">Добавить пользователя</h3>
             <div className="form-group">
               <label>Логин</label>
@@ -110,13 +207,52 @@ export default function UsersPage() {
             </div>
             <div className="form-group">
               <label>Роль</label>
-              <select className="form-control" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
+              <select className="form-control" value={newUser.role} onChange={e => handleRoleChange(e.target.value)}>
                 {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
             </div>
+            {renderPermissionsBlock()}
             <div className="modal-actions">
               <button className="btn btn-outline" onClick={() => setShowModal(false)}>Отмена</button>
               <button className="btn btn-primary" onClick={handleCreate}>Создать</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <div className="modal-overlay" onClick={() => setEditingUser(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 550 }}>
+            <h3 className="modal-title">Редактировать: {editingUser.username}</h3>
+            <div className="form-group">
+              <label>ФИО</label>
+              <input className="form-control" value={editingUser.full_name || ''} onChange={e => setEditingUser({ ...editingUser, full_name: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Email</label>
+              <input className="form-control" type="email" value={editingUser.email || ''} onChange={e => setEditingUser({ ...editingUser, email: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Роль</label>
+              <select className="form-control" value={editingUser.role} onChange={e => handleRoleChange(e.target.value)}>
+                {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={editingUser.is_active}
+                  onChange={e => setEditingUser({ ...editingUser, is_active: e.target.checked })}
+                />
+                Активен
+              </label>
+            </div>
+            {renderPermissionsBlock()}
+            <div className="modal-actions">
+              <button className="btn btn-outline" onClick={() => setEditingUser(null)}><X size={14} /> Отмена</button>
+              <button className="btn btn-primary" onClick={handleSaveEdit}><Save size={14} /> Сохранить</button>
             </div>
           </div>
         </div>
