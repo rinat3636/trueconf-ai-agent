@@ -45,8 +45,10 @@ async def _load_company_reference():
         chunks = chunk_text(content)
 
         doc = Document(
+            filename="company_reference.txt",
             original_filename="company_reference.txt",
             file_type="txt",
+            file_path=ref_path,
             file_size=len(content),
             status="processed",
             chunk_count=len(chunks),
@@ -60,9 +62,10 @@ async def _load_company_reference():
         for i, chunk in enumerate(chunks):
             item = KnowledgeItem(
                 document_id=doc.id,
+                title=f"Справочник компании (часть {i+1})",
                 content=chunk,
+                category="company_reference",
                 status="approved",
-                source_type="auto_reference",
                 priority=90,
             )
             db.add(item)
@@ -188,6 +191,9 @@ _cors_origins = [
     "http://localhost:3000",
     "http://localhost:80",
     "http://localhost",
+    "http://161.104.18.73:3000",
+    "http://161.104.18.73",
+    "https://conf.ice-mir.ru",
 ]
 # In production, add your actual domain here
 # For Cloudflare tunnels, we allow all *.trycloudflare.com
@@ -207,12 +213,14 @@ from app.api.chat import router as chat_router
 from app.api.knowledge import router as knowledge_router
 from app.api.analytics import router as analytics_router
 from app.api.monitoring import router as monitoring_router
+from app.api.settings import router as settings_router
 
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(knowledge_router)
 app.include_router(analytics_router)
 app.include_router(monitoring_router)
+app.include_router(settings_router)
 
 
 @app.get("/")

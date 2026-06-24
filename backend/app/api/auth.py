@@ -126,6 +126,7 @@ async def create_user(
         full_name=user_data.full_name,
         hashed_password=get_password_hash(user_data.password),
         role=user_data.role,
+        permissions=user_data.permissions or {},
     )
     db.add(user)
     await db.flush()
@@ -161,6 +162,8 @@ async def update_user(
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
+    if data.permissions is not None:
+        user.permissions = data.permissions
 
     await log_action(
         db, "update_user", user_id=current_user.id,

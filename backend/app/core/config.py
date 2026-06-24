@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     TRUECONF_SERVER_ADDRESS: str = ""  # IP or FQDN, e.g. "192.168.1.158"
     TRUECONF_BOT_USERNAME: str = ""  # TrueConf Server user account for bot
     TRUECONF_BOT_PASSWORD: str = ""  # Password for the bot user account
+    TRUECONF_BOT_TOKEN: str = ""  # Pre-issued JWT token (bypasses password auth)
     TRUECONF_BOT_USE_HTTPS: bool = False  # Use wss:// via Web Manager (port 443)
     TRUECONF_BOT_WEB_PORT: int = 0  # Custom web port (0 = default)
 

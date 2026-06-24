@@ -178,6 +178,10 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
         await _cache_result(question_hash, result)
         return result
 
+    # --- Load bot settings from DB ---
+    from app.api.settings import get_bot_settings
+    bot_settings = await get_bot_settings(db)
+
     # --- STEP 3: Corporate Rules Loading ---
     rules_data = await load_corporate_rules(db)
     trace["pipeline"]["rules_loaded"] = len(rules_data)
@@ -193,16 +197,27 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
 
     # --- STEP 4: Vector Search ---
     search_start = time.time()
-    try:
-        context_items = await search_knowledge(
-            question,
-            n_results=settings.RAG_TOP_K,
-            categories=intent.get("categories"),
-            score_threshold=settings.RAG_SCORE_THRESHOLD,
-        )
-    except RuntimeError as e:
-        logger.warning("Embeddings unavailable, skipping RAG search: %s", e)
-        context_items = []
+    context_items = []
+    if bot_settings.get("enable_knowledge_base", True):
+        search_categories = intent.get("categories")
+        allowed = bot_settings.get("allowed_categories", [])
+        if allowed:
+            if search_categories:
+                search_categories = [c for c in search_categories if c in allowed]
+            else:
+                search_categories = allowed
+
+        try:
+            context_items = await search_knowledge(
+                question,
+                n_results=settings.RAG_TOP_K,
+                categories=search_categories,
+                score_threshold=settings.RAG_SCORE_THRESHOLD,
+            )
+        except RuntimeError as e:
+            logger.warning("Embeddings unavailable, skipping RAG search: %s", e)
+    else:
+        trace["pipeline"]["knowledge_base_disabled"] = True
     search_time = int((time.time() - search_start) * 1000)
 
     # --- STEP 4a: DB fallback if vector search returned nothing ---
@@ -266,7 +281,7 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
 
     # --- STEP 4b: Sales Data (if sales intent) ---
     sales_context = ""
-    if intent.get("intent") == "sales_query":
+    if intent.get("intent") == "sales_query" and bot_settings.get("enable_sales_data", True):
         try:
             latest_report = await db.execute(
                 select(SalesReport).order_by(SalesReport.id.desc()).limit(1)
@@ -318,7 +333,7 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
     trace["pipeline"]["context_tokens"] = total_context_chars // 4
 
     # --- STEP 6: LLM Generation ---
-    system_prompt = _build_system_prompt(rules_data, has_sales_data=bool(sales_context))
+    system_prompt = _build_system_prompt(rules_data, has_sales_data=bool(sales_context), bot_settings=bot_settings)
     messages = [{"role": "system", "content": system_prompt}]
 
     if chat_history:
@@ -389,7 +404,7 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
     return result
 
 
-def _build_system_prompt(rules: List[Dict[str, Any]], has_sales_data: bool = False) -> str:
+def _build_system_prompt(rules: List[Dict[str, Any]], has_sales_data: bool = False, bot_settings: Optional[Dict[str, Any]] = None) -> str:
     prompt = (
         'Ты — внутренний корпоративный ИИ-ассистент компании ТД "Мир Мороженого" '
         '(дистрибьютор мороженого и продуктов питания, Владимирская область).\n\n'
@@ -430,6 +445,27 @@ def _build_system_prompt(rules: List[Dict[str, Any]], has_sales_data: bool = Fal
         prompt += "\n--- КОРПОРАТИВНЫЕ ПРАВИЛА (обязательны к применению) ---\n"
         for r in rules:
             prompt += f"[{r['rule_type'].upper()}] {r['title']}: {r['content']}\n"
+
+    # Apply admin-configured bot settings
+    if bot_settings:
+        custom_instructions = bot_settings.get("system_instructions", "")
+        if custom_instructions:
+            prompt += f"\n--- ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ АДМИНИСТРАТОРА ---\n{custom_instructions}\n"
+
+        restricted = bot_settings.get("restricted_topics", [])
+        if restricted:
+            prompt += "\n--- ЗАПРЕЩЁННЫЕ ТЕМЫ (НИКОГДА не обсуждай) ---\n"
+            for topic in restricted:
+                prompt += f"- {topic}\n"
+            prompt += "Если пользователь спрашивает о запрещённой теме, вежливо откажи и предложи обратиться к руководству.\n"
+
+        trueconf_restrictions = bot_settings.get("trueconf_restrictions", "")
+        if trueconf_restrictions:
+            prompt += f"\n--- ОГРАНИЧЕНИЯ ДЛЯ TRUECONF ---\n{trueconf_restrictions}\n"
+
+        custom_suffix = bot_settings.get("custom_prompt_suffix", "")
+        if custom_suffix:
+            prompt += f"\n{custom_suffix}\n"
 
     return prompt
 

@@ -14,6 +14,7 @@ import SalesPage from './pages/SalesPage'
 import MonitoringPage from './pages/MonitoringPage'
 import UsersPage from './pages/UsersPage'
 import AuditPage from './pages/AuditPage'
+import BotSettingsPage from './pages/BotSettingsPage'
 
 function hasRole(user, roles) {
   return roles.includes(user?.role)
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/sales" element={isManagerPlus ? <SalesPage /> : <Navigate to="/chat" />} />
           <Route path="/monitoring" element={isAdminOrSuper ? <MonitoringPage /> : <Navigate to="/chat" />} />
           <Route path="/users" element={isSuperAdmin ? <UsersPage /> : <Navigate to="/chat" />} />
+          <Route path="/bot-settings" element={isAdminOrSuper ? <BotSettingsPage /> : <Navigate to="/chat" />} />
           <Route path="/audit" element={isAdminOrSuper ? <AuditPage /> : <Navigate to="/chat" />} />
           <Route path="*" element={<Navigate to={isAdminOrSuper ? "/" : "/chat"} />} />
         </Routes>
