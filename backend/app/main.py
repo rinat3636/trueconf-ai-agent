@@ -20,6 +20,84 @@ logger = logging.getLogger(__name__)
 _background_tasks = []
 
 
+async def _load_company_reference():
+    """Load company reference document into knowledge base once."""
+    import os
+    from app.models.knowledge import Document
+    async with async_session() as db:
+        result = await db.execute(
+            select(Document).where(Document.original_filename == "company_reference.txt")
+        )
+        if result.scalar_one_or_none():
+            return
+
+        ref_path = os.path.join(os.path.dirname(__file__), "reference", "company_reference.txt")
+        if not os.path.exists(ref_path):
+            logger.warning("Company reference file not found: %s", ref_path)
+            return
+
+        with open(ref_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        from app.services.document_processor import chunk_text
+        from app.services.knowledge_service import add_knowledge_item_to_vector_db
+
+        chunks = chunk_text(content)
+
+        doc = Document(
+            original_filename="company_reference.txt",
+            file_type="txt",
+            file_size=len(content),
+            status="processed",
+            chunk_count=len(chunks),
+            uploaded_by=1,
+        )
+        db.add(doc)
+        await db.flush()
+        await db.refresh(doc)
+
+        from app.models.knowledge import KnowledgeItem
+        for i, chunk in enumerate(chunks):
+            item = KnowledgeItem(
+                document_id=doc.id,
+                content=chunk,
+                status="approved",
+                source_type="auto_reference",
+                priority=90,
+            )
+            db.add(item)
+            await db.flush()
+            await db.refresh(item)
+            try:
+                await add_knowledge_item_to_vector_db(
+                    item.id, chunk, title="Справочник компании",
+                    category="company_reference", priority=90,
+                )
+            except Exception as e:
+                logger.warning("Failed to index reference chunk %d: %s", i, e)
+
+        await db.commit()
+        logger.info("Loaded company reference: %d chunks indexed", len(chunks))
+
+
+async def _index_existing_reports():
+    """Index sales profiles for any processed reports not yet indexed in Qdrant."""
+    from app.models.analytics import SalesReport
+    from app.services.sales_indexer import index_sales_profiles
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(SalesReport).where(SalesReport.status == "processed")
+        )
+        reports = result.scalars().all()
+        for report in reports:
+            try:
+                indexed = await index_sales_profiles(db, report.id)
+                logger.info("Indexed %d profiles for report %d", indexed, report.id)
+            except Exception as e:
+                logger.warning("Failed to index report %d: %s", report.id, e)
+
+
 async def create_default_admin():
     async with async_session() as db:
         result = await db.execute(select(User).where(User.username == "admin"))
@@ -51,6 +129,18 @@ async def lifespan(app: FastAPI):
         logger.info("Qdrant collections initialized")
     except Exception as e:
         logger.warning("Qdrant not available: %s", e)
+
+    # Load company reference document into knowledge base (once)
+    try:
+        await _load_company_reference()
+    except Exception as e:
+        logger.warning("Failed to load company reference: %s", e)
+
+    # Index existing sales reports if not yet indexed in Qdrant
+    try:
+        await _index_existing_reports()
+    except Exception as e:
+        logger.warning("Failed to index existing reports: %s", e)
 
     # Start background scheduler
     from app.services.scheduler import scheduler_loop

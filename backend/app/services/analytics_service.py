@@ -279,6 +279,135 @@ async def get_product_analysis(db: AsyncSession, report_id: int) -> Dict[str, An
     }
 
 
+async def compare_reports(
+    db: AsyncSession,
+    report_id_current: int,
+    report_id_previous: int,
+) -> Dict[str, Any]:
+    """Compare two sales reports: revenue/profit/margin changes per TP, new/lost clients."""
+    current_analytics = await get_sales_analytics(db, report_id_current)
+    previous_analytics = await get_sales_analytics(db, report_id_previous)
+
+    if "error" in current_analytics or "error" in previous_analytics:
+        return {"error": "One or both reports have no data"}
+
+    # TP-level comparison
+    current_reps = {m["name"]: m for m in (current_analytics.get("top_managers", []) +
+                    current_analytics.get("weak_managers", []))}
+    previous_reps = {m["name"]: m for m in (previous_analytics.get("top_managers", []) +
+                     previous_analytics.get("weak_managers", []))}
+
+    # Get ALL reps for both reports
+    cur_reps_result = await db.execute(
+        select(SalesRecord).where(
+            SalesRecord.report_id == report_id_current,
+            SalesRecord.level == "rep",
+        )
+    )
+    prev_reps_result = await db.execute(
+        select(SalesRecord).where(
+            SalesRecord.report_id == report_id_previous,
+            SalesRecord.level == "rep",
+        )
+    )
+    cur_reps_all = {r.name: r for r in cur_reps_result.scalars().all()}
+    prev_reps_all = {r.name: r for r in prev_reps_result.scalars().all()}
+
+    rep_changes = []
+    for name in set(list(cur_reps_all.keys()) + list(prev_reps_all.keys())):
+        cur = cur_reps_all.get(name)
+        prev = prev_reps_all.get(name)
+        entry = {"name": name}
+        if cur and prev:
+            entry["revenue_current"] = cur.revenue or 0
+            entry["revenue_previous"] = prev.revenue or 0
+            entry["revenue_change"] = (cur.revenue or 0) - (prev.revenue or 0)
+            entry["revenue_change_pct"] = (
+                ((cur.revenue or 0) - (prev.revenue or 0)) / (prev.revenue or 1) * 100
+            )
+            entry["profit_current"] = cur.gross_profit or 0
+            entry["profit_previous"] = prev.gross_profit or 0
+            entry["margin_current"] = cur.margin_pct or 0
+            entry["margin_previous"] = prev.margin_pct or 0
+            entry["status"] = "active"
+        elif cur and not prev:
+            entry["revenue_current"] = cur.revenue or 0
+            entry["revenue_previous"] = 0
+            entry["status"] = "new"
+        else:
+            entry["revenue_current"] = 0
+            entry["revenue_previous"] = prev.revenue or 0
+            entry["status"] = "lost"
+        rep_changes.append(entry)
+
+    rep_changes.sort(key=lambda x: abs(x.get("revenue_change", 0)), reverse=True)
+
+    # Client-level: new/lost clients
+    cur_clients = await db.execute(
+        select(SalesRecord.name).where(
+            SalesRecord.report_id == report_id_current,
+            SalesRecord.level == "client",
+        )
+    )
+    prev_clients = await db.execute(
+        select(SalesRecord.name).where(
+            SalesRecord.report_id == report_id_previous,
+            SalesRecord.level == "client",
+        )
+    )
+    cur_client_names = set(r[0] for r in cur_clients)
+    prev_client_names = set(r[0] for r in prev_clients)
+
+    new_clients = list(cur_client_names - prev_client_names)
+    lost_clients = list(prev_client_names - cur_client_names)
+
+    # Product-level: new/lost products
+    cur_products = await db.execute(
+        select(SalesRecord.name).where(
+            SalesRecord.report_id == report_id_current,
+            SalesRecord.level == "product",
+        ).distinct()
+    )
+    prev_products = await db.execute(
+        select(SalesRecord.name).where(
+            SalesRecord.report_id == report_id_previous,
+            SalesRecord.level == "product",
+        ).distinct()
+    )
+    cur_product_names = set(r[0] for r in cur_products if r[0])
+    prev_product_names = set(r[0] for r in prev_products if r[0])
+
+    new_products = list(cur_product_names - prev_product_names)
+    lost_products = list(prev_product_names - cur_product_names)
+
+    def _s(v):
+        return v if v is not None else 0
+
+    return {
+        "overview": {
+            "revenue_current": _s(current_analytics.get("total_revenue")),
+            "revenue_previous": _s(previous_analytics.get("total_revenue")),
+            "revenue_change": _s(current_analytics.get("total_revenue")) - _s(previous_analytics.get("total_revenue")),
+            "profit_current": _s(current_analytics.get("total_profit")),
+            "profit_previous": _s(previous_analytics.get("total_profit")),
+            "profit_change": _s(current_analytics.get("total_profit")) - _s(previous_analytics.get("total_profit")),
+            "margin_current": _s(current_analytics.get("avg_margin")),
+            "margin_previous": _s(previous_analytics.get("avg_margin")),
+            "client_count_current": _s(current_analytics.get("client_count")),
+            "client_count_previous": _s(previous_analytics.get("client_count")),
+        },
+        "rep_changes": rep_changes,
+        "new_clients": new_clients[:50],
+        "lost_clients": lost_clients[:50],
+        "new_clients_count": len(new_clients),
+        "lost_clients_count": len(lost_clients),
+        "new_products": new_products[:30],
+        "lost_products": lost_products[:30],
+        "new_products_count": len(new_products),
+        "lost_products_count": len(lost_products),
+    }
+
+
 async def generate_ai_recommendations(analytics: Dict[str, Any]) -> List[str]:
     analytics_text = _format_analytics_for_ai(analytics)
 
@@ -400,17 +529,8 @@ async def answer_analytics_question(
     report_id: Optional[int] = None,
 ) -> str:
     if report_id:
-        analytics = await get_sales_analytics(db, report_id)
-        analytics_text = _format_analytics_for_ai(analytics)
-
-        product_analysis = await get_product_analysis(db, report_id)
-        if product_analysis.get("products"):
-            analytics_text += "\n\nТоп-10 продуктов по выручке:\n"
-            for p in product_analysis["products"][:10]:
-                analytics_text += (
-                    f"  {p['name']}: выручка {p['total_revenue']:,.0f}, "
-                    f"маржа {p['avg_margin']:.1f}%, доля {p['revenue_share_pct']:.1f}%\n"
-                )
+        from app.services.sales_context import build_smart_sales_context
+        analytics_text, _ = await build_smart_sales_context(question, db, report_id)
     else:
         analytics_text = "Данные аналитики не загружены."
 

@@ -127,6 +127,8 @@ export const api = {
   getReportRecommendations: (id) => request(`/analytics/reports/${id}/recommendations`),
   getFullAnalysis: (id) => request(`/analytics/reports/${id}/full-analysis`),
   askAnalytics: (data) => request('/analytics/ask', { method: 'POST', body: JSON.stringify(data) }),
+  compareReports: (currentId, previousId) => request(`/analytics/reports/compare/${currentId}/${previousId}`),
+  reindexReport: (id) => request(`/analytics/reports/${id}/reindex`, { method: 'POST' }),
 
   // Monitoring
   getStats: () => request('/monitoring/stats'),

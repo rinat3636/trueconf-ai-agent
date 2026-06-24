@@ -451,29 +451,58 @@ def _is_product_name(name: str) -> bool:
     return bool(_PRODUCT_PATTERN.search(name))
 
 
-def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
+def _read_excel(file_path: str):
     ext = os.path.splitext(file_path)[1].lower()
-
     try:
         if ext == ".xls":
-            df = pd.read_excel(file_path, engine="xlrd", header=None)
+            return pd.read_excel(file_path, engine="xlrd", header=None)
         else:
-            df = pd.read_excel(file_path, engine="openpyxl", header=None)
+            return pd.read_excel(file_path, engine="openpyxl", header=None)
     except Exception:
-        df = pd.read_csv(file_path, header=None)
+        return pd.read_csv(file_path, header=None)
 
+
+# Column name synonyms for flexible matching
+_COLUMN_SYNONYMS = {
+    "manager": ["менеджер", "тп", "торговый представитель", "manager", "rep", "сотрудник", "ответственный"],
+    "client": ["клиент", "контрагент", "покупатель", "client", "customer", "точка", "организация"],
+    "product": ["товар", "продукт", "номенклатура", "product", "sku", "артикул", "наименование товара"],
+    "quantity": ["количество", "кол-во", "кол.", "qty", "quantity", "шт"],
+    "tonnage": ["тоннаж", "вес", "масса", "кг", "tonnage", "weight"],
+    "revenue": ["выручка", "стоимость", "сумма", "revenue", "оборот", "продажи", "сумма продаж"],
+    "profit": ["прибыль", "валовая прибыль", "доход", "profit", "gross profit", "маржинальный доход"],
+    "margin": ["маржа", "маржинальность", "рентабельность", "margin", "%", "наценка"],
+}
+
+
+def _detect_column_mapping(df, header_row: int) -> dict:
+    """Auto-detect column mapping from header row using synonyms."""
+    if header_row is None or header_row >= len(df):
+        return {}
+
+    header_vals = []
+    row = df.iloc[header_row]
+    for v in row.values:
+        header_vals.append(str(v).strip().lower() if pd.notna(v) else "")
+
+    mapping = {}
+    for field, synonyms in _COLUMN_SYNONYMS.items():
+        for col_idx, header in enumerate(header_vals):
+            if not header:
+                continue
+            for syn in synonyms:
+                if syn in header:
+                    mapping[field] = col_idx
+                    break
+            if field in mapping:
+                break
+
+    return mapping
+
+
+def _parse_1c_hierarchical(df, metadata: dict) -> Tuple[List[dict], dict]:
+    """Original 1C hierarchical parser (ТП→Клиент→Продукт nested structure)."""
     records = []
-    metadata = {}
-
-    for idx, row in df.iterrows():
-        values = [v for v in row.values if pd.notna(v)]
-        if not values:
-            continue
-
-        if "Период:" in str(row.values):
-            for v in row.values:
-                if pd.notna(v) and "Период:" in str(v):
-                    metadata["period"] = str(v).replace("Период:", "").strip()
 
     header_row = None
     for idx, row in df.iterrows():
@@ -563,7 +592,173 @@ def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
                 "record_level": "client",
             })
 
-    if records:
+    return records, metadata
+
+
+def _parse_flat_table(df) -> Tuple[List[dict], dict]:
+    """Fallback flat-table parser: each row has manager + client + product columns."""
+    metadata = {}
+
+    # Try to find header row with known column names
+    header_row = None
+    for idx in range(min(20, len(df))):
+        row_vals = [str(v).strip().lower() for v in df.iloc[idx].values if pd.notna(v)]
+        combined = " ".join(row_vals)
+        # Look for rows that have at least 2 recognizable column names
+        found = 0
+        for synonyms in _COLUMN_SYNONYMS.values():
+            if any(s in combined for s in synonyms):
+                found += 1
+        if found >= 2:
+            header_row = idx
+            break
+
+    if header_row is None:
+        return [], metadata
+
+    mapping = _detect_column_mapping(df, header_row)
+    if not mapping:
+        return [], metadata
+
+    records = []
+    managers_seen = {}
+    clients_seen = {}
+
+    for idx in range(header_row + 1, len(df)):
+        row = df.iloc[idx]
+
+        def _get(field):
+            col = mapping.get(field)
+            if col is not None and col < len(row) and pd.notna(row.iloc[col]):
+                return row.iloc[col]
+            return None
+
+        manager_name = str(_get("manager")).strip() if _get("manager") else None
+        client_name = str(_get("client")).strip() if _get("client") else None
+        product_name = str(_get("product")).strip() if _get("product") else None
+
+        if not manager_name or manager_name in ("nan", "None", ""):
+            continue
+
+        is_total = "итого" in (manager_name or "").lower() or "итого" in (client_name or "").lower()
+        if is_total:
+            continue
+
+        def _num(field):
+            v = _get(field)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+
+        quantity = _num("quantity")
+        tonnage = _num("tonnage")
+        revenue = _num("revenue")
+        profit = _num("profit")
+        margin = _num("margin")
+
+        # Aggregate manager-level if not seen
+        if manager_name and manager_name not in managers_seen:
+            managers_seen[manager_name] = {
+                "manager_name": manager_name,
+                "client_name": None,
+                "product_name": None,
+                "quantity": 0, "tonnage": 0, "revenue": 0, "profit": 0, "margin_pct": None,
+                "record_level": "manager",
+            }
+
+        # Track manager totals
+        mgr = managers_seen.get(manager_name)
+        if mgr:
+            mgr["quantity"] = (mgr["quantity"] or 0) + (quantity or 0)
+            mgr["revenue"] = (mgr["revenue"] or 0) + (revenue or 0)
+            mgr["profit"] = (mgr["profit"] or 0) + (profit or 0)
+
+        # Client-level record
+        client_key = f"{manager_name}|{client_name}" if client_name else None
+        if client_name and client_key and client_key not in clients_seen:
+            clients_seen[client_key] = {
+                "manager_name": manager_name,
+                "client_name": client_name,
+                "product_name": None,
+                "quantity": 0, "tonnage": 0, "revenue": 0, "profit": 0, "margin_pct": None,
+                "record_level": "client",
+            }
+
+        if client_key and client_key in clients_seen:
+            cl = clients_seen[client_key]
+            cl["quantity"] = (cl["quantity"] or 0) + (quantity or 0)
+            cl["revenue"] = (cl["revenue"] or 0) + (revenue or 0)
+            cl["profit"] = (cl["profit"] or 0) + (profit or 0)
+
+        # Product-level record (each row)
+        if product_name and product_name not in ("nan", "None", ""):
+            records.append({
+                "manager_name": manager_name,
+                "client_name": client_name or "(без клиента)",
+                "product_name": product_name,
+                "quantity": quantity,
+                "tonnage": tonnage,
+                "revenue": revenue,
+                "profit": profit,
+                "margin_pct": margin,
+                "record_level": "product",
+            })
+
+    # Compute margins for aggregated records
+    for mgr in managers_seen.values():
+        if mgr["revenue"] and mgr["revenue"] > 0 and mgr["profit"] is not None:
+            mgr["margin_pct"] = round(mgr["profit"] / mgr["revenue"] * 100, 2)
+
+    for cl in clients_seen.values():
+        if cl["revenue"] and cl["revenue"] > 0 and cl["profit"] is not None:
+            cl["margin_pct"] = round(cl["profit"] / cl["revenue"] * 100, 2)
+
+    all_records = list(managers_seen.values()) + list(clients_seen.values()) + records
+
+    if all_records:
+        manager_records = [r for r in all_records if r["record_level"] == "manager"]
+        metadata["total_revenue"] = sum(r["revenue"] or 0 for r in manager_records)
+        metadata["total_profit"] = sum(r["profit"] or 0 for r in manager_records)
+        metadata["total_managers"] = len(manager_records)
+        client_records = [r for r in all_records if r["record_level"] == "client"]
+        metadata["total_clients"] = len(client_records)
+        product_records = [r for r in all_records if r["record_level"] == "product"]
+        unique_products = set(r["product_name"] for r in product_records if r["product_name"])
+        metadata["total_skus"] = len(unique_products)
+        metadata["parser"] = "flat_table"
+
+    return all_records, metadata
+
+
+def parse_sales_report(file_path: str) -> Tuple[List[dict], dict]:
+    df = _read_excel(file_path)
+
+    records = []
+    metadata = {}
+
+    # Extract period from header area
+    for idx, row in df.iterrows():
+        values = [v for v in row.values if pd.notna(v)]
+        if not values:
+            continue
+        if "Период:" in str(row.values):
+            for v in row.values:
+                if pd.notna(v) and "Период:" in str(v):
+                    metadata["period"] = str(v).replace("Период:", "").strip()
+
+    # Try 1C hierarchical parser first
+    records, metadata = _parse_1c_hierarchical(df, metadata)
+
+    # Fallback to flat-table parser if 1C parser found nothing
+    if not records:
+        logger.info("1C parser found no records, trying flat-table parser for %s", file_path)
+        records, flat_metadata = _parse_flat_table(df)
+        metadata.update(flat_metadata)
+
+    if records and "total_revenue" not in metadata:
         manager_records = [r for r in records if r["record_level"] == "manager"]
         metadata["total_revenue"] = sum(r["revenue"] or 0 for r in manager_records)
         metadata["total_profit"] = sum(r["profit"] or 0 for r in manager_records)

@@ -25,20 +25,20 @@ async def close_httpx_client():
         _httpx_client = None
 
 
-async def _anthropic_chat(
+async def _llm_chat(
     messages: list[dict],
     model: str,
     temperature: float,
     max_tokens: int,
 ) -> str:
-    if not settings.ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY не настроен. Укажите ключ в .env")
+    if not settings.LLM_API_KEY:
+        raise RuntimeError("LLM_API_KEY не настроен. Укажите ключ в .env")
     client = get_httpx_client()
-    url = f"{settings.ANTHROPIC_BASE_URL}/chat/completions"
+    url = f"{settings.LLM_BASE_URL}/chat/completions"
     resp = await client.post(
         url,
         headers={
-            "Authorization": f"Bearer {settings.ANTHROPIC_API_KEY}",
+            "Authorization": f"Bearer {settings.LLM_API_KEY}",
             "Content-Type": "application/json",
         },
         json={
@@ -49,25 +49,24 @@ async def _anthropic_chat(
         },
     )
     if resp.status_code != 200:
-        logger.error("Claude API HTTP %d: %s", resp.status_code, resp.text[:500])
+        logger.error("LLM API HTTP %d: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
     data = resp.json()
     choices = data.get("choices", [])
     if not choices:
-        logger.error("Claude API empty choices: %s", str(data)[:500])
-        raise RuntimeError(f"Claude API вернул пустой ответ (нет choices)")
+        logger.error("LLM API empty choices: %s", str(data)[:500])
+        raise RuntimeError("LLM API вернул пустой ответ (нет choices)")
     message = choices[0].get("message", {})
     content = message.get("content")
     if content is None:
-        # Try alternative response formats
         refusal = message.get("refusal", "")
         if refusal:
             return f"[Отказ]: {refusal}"
         text = choices[0].get("text", "")
         if text:
             return text
-        logger.error("Claude API no content in message: %s", str(message)[:500])
-        raise RuntimeError(f"Claude API: нет content в ответе")
+        logger.error("LLM API no content in message: %s", str(message)[:500])
+        raise RuntimeError("LLM API: нет content в ответе")
     return content
 
 
@@ -77,18 +76,17 @@ async def chat_completion(
     temperature: float = 0.1,
     max_tokens: int = 2000,
 ) -> str:
-    claude_model = model or settings.LLM_CHAT_MODEL
-    if "claude" not in claude_model:
-        claude_model = "claude-sonnet-4-20250514"
+    """Main chat completion — uses LLM_CHAT_MODEL by default."""
+    use_model = model or settings.LLM_CHAT_MODEL
 
     max_retries = 3
     last_error = None
 
     for attempt in range(max_retries):
         try:
-            result = await _anthropic_chat(messages, claude_model, temperature, max_tokens)
+            result = await _llm_chat(messages, use_model, temperature, max_tokens)
             if not result or not result.strip():
-                logger.warning("Claude returned empty response, retry %d/%d", attempt + 1, max_retries)
+                logger.warning("LLM returned empty response, retry %d/%d", attempt + 1, max_retries)
                 await asyncio.sleep(3 * (attempt + 1))
                 continue
             return result
@@ -104,17 +102,31 @@ async def chat_completion(
             if is_retryable:
                 wait_time = 5 * (attempt + 1)
                 logger.warning(
-                    "Anthropic retryable error (attempt %d/%d), waiting %ds: %s: %s",
+                    "LLM retryable error (attempt %d/%d), waiting %ds: %s: %s",
                     attempt + 1, max_retries, wait_time, error_type, e,
                 )
                 await asyncio.sleep(wait_time)
             else:
-                logger.error("Anthropic (Claude) error [%s]: %s", error_type, e)
+                logger.error("LLM error [%s]: %s", error_type, e)
                 break
 
     raise RuntimeError(
-        f"Ошибка Claude API ({type(last_error).__name__}): {last_error}. "
-        f"Проверьте ANTHROPIC_API_KEY и доступность сервера."
+        f"Ошибка LLM API ({type(last_error).__name__}): {last_error}. "
+        f"Проверьте LLM_API_KEY и доступность сервера."
+    )
+
+
+async def light_completion(
+    messages: list[dict],
+    temperature: float = 0.1,
+    max_tokens: int = 1000,
+) -> str:
+    """Lightweight completion for extraction/classification tasks."""
+    return await chat_completion(
+        messages,
+        model=settings.LLM_LIGHT_MODEL,
+        temperature=temperature,
+        max_tokens=max_tokens,
     )
 
 
@@ -134,8 +146,6 @@ async def get_embedding(text: str) -> list[float]:
     if len(text) > 8000:
         text = text[:8000]
 
-    # Use local fastembed (no API key needed)
-    import asyncio
     model = _get_fastembed()
     embeddings = await asyncio.to_thread(
         lambda: list(model.embed([text]))[0].tolist()

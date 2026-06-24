@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Upload, BarChart3, Users, ShoppingBag, Lightbulb, Send, Package, Brain, Trash2 } from 'lucide-react'
+import { Upload, BarChart3, Users, ShoppingBag, Lightbulb, Send, Package, Brain, Trash2, GitCompare, RefreshCw } from 'lucide-react'
 import { api } from '../services/api'
 
 export default function SalesPage() {
@@ -22,6 +22,10 @@ export default function SalesPage() {
   const [askLoading, setAskLoading] = useState(false)
   const [clientsPage, setClientsPage] = useState(1)
   const [productsPage, setProductsPage] = useState(1)
+  const [compareReport, setCompareReport] = useState(null)
+  const [comparison, setComparison] = useState(null)
+  const [loadingCompare, setLoadingCompare] = useState(false)
+  const [reindexing, setReindexing] = useState(false)
   const fileRef = useRef(null)
   const PAGE_SIZE = 50
 
@@ -62,6 +66,8 @@ export default function SalesPage() {
     setProducts(null)
     setRecommendations([])
     setFullAnalysis(null)
+    setComparison(null)
+    setCompareReport(null)
     setActiveTab('overview')
     setClientsPage(1)
     setProductsPage(1)
@@ -119,6 +125,26 @@ export default function SalesPage() {
       setAnswer(data.answer)
     } catch (err) { setAnswer('Ошибка: ' + err.message) }
     finally { setAskLoading(false) }
+  }
+
+  const loadComparison = async (prevId) => {
+    if (!selectedReport || !prevId) return
+    setLoadingCompare(true)
+    try {
+      const data = await api.compareReports(selectedReport.id, prevId)
+      setComparison(data)
+    } catch (err) { console.error(err); setComparison(null) }
+    finally { setLoadingCompare(false) }
+  }
+
+  const handleReindex = async () => {
+    if (!selectedReport) return
+    setReindexing(true)
+    try {
+      await api.reindexReport(selectedReport.id)
+      alert('Переиндексация запущена. Профили продаж будут обновлены в фоне.')
+    } catch (err) { alert('Ошибка: ' + err.message) }
+    finally { setReindexing(false) }
   }
 
   const fmt = (n) => n != null ? n.toLocaleString('ru-RU', { maximumFractionDigits: 0 }) : '-'
@@ -219,6 +245,7 @@ export default function SalesPage() {
                     { key: 'managers', icon: Users, label: 'ТП' },
                     { key: 'clients', icon: ShoppingBag, label: 'Клиенты' },
                     { key: 'products', icon: Package, label: 'Продукты' },
+                    { key: 'compare', icon: GitCompare, label: 'Сравнение' },
                     { key: 'recommendations', icon: Lightbulb, label: 'Рекомендации' },
                     { key: 'full', icon: Brain, label: 'Полный анализ' },
                     { key: 'ask', icon: Send, label: 'Вопрос ИИ' },
@@ -430,6 +457,105 @@ export default function SalesPage() {
                       <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.9rem' }}>
                         {fullAnalysis.detailed_analysis || fullAnalysis.overview || JSON.stringify(fullAnalysis, null, 2)}
                       </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'compare' && (
+                  <div>
+                    {reports.filter(r => r.id !== selectedReport?.id && (r.status === 'processed' || r.status === 'ready')).length === 0 ? (
+                      <div className="empty-state"><p>Нет других отчётов для сравнения. Загрузите второй отчёт.</p></div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem' }}>
+                          <label style={{ fontWeight: 500, fontSize: '0.85rem' }}>Сравнить с:</label>
+                          <select
+                            className="form-control"
+                            style={{ maxWidth: '300px' }}
+                            value={compareReport || ''}
+                            onChange={e => {
+                              const id = parseInt(e.target.value)
+                              setCompareReport(id)
+                              if (id) loadComparison(id)
+                            }}
+                          >
+                            <option value="">Выберите отчёт</option>
+                            {reports.filter(r => r.id !== selectedReport?.id && (r.status === 'processed' || r.status === 'ready')).map(r => (
+                              <option key={r.id} value={r.id}>{r.original_filename} ({r.period_start || 'нет периода'})</option>
+                            ))}
+                          </select>
+                          <button className="btn btn-outline btn-sm" onClick={handleReindex} disabled={reindexing} title="Переиндексация профилей продаж в Qdrant">
+                            <RefreshCw size={14} /> {reindexing ? '...' : 'Переиндексировать'}
+                          </button>
+                        </div>
+
+                        {loadingCompare ? (
+                          <div className="loading"><div className="spinner" /> Сравнение отчётов...</div>
+                        ) : comparison ? (
+                          <>
+                            <div className="stats-grid" style={{ marginBottom: '1rem' }}>
+                              <div className="stat-card">
+                                <div className="stat-label">Выручка (изменение)</div>
+                                <div className="stat-value" style={{ color: comparison.overview.revenue_change >= 0 ? '#16a34a' : '#dc2626' }}>
+                                  {comparison.overview.revenue_change >= 0 ? '+' : ''}{fmt(comparison.overview.revenue_change)}
+                                </div>
+                              </div>
+                              <div className="stat-card">
+                                <div className="stat-label">Прибыль (изменение)</div>
+                                <div className="stat-value" style={{ color: comparison.overview.profit_change >= 0 ? '#16a34a' : '#dc2626' }}>
+                                  {comparison.overview.profit_change >= 0 ? '+' : ''}{fmt(comparison.overview.profit_change)}
+                                </div>
+                              </div>
+                              <div className="stat-card">
+                                <div className="stat-label">Новые клиенты</div>
+                                <div className="stat-value" style={{ color: '#16a34a' }}>+{comparison.new_clients_count}</div>
+                              </div>
+                              <div className="stat-card">
+                                <div className="stat-label">Потерянные клиенты</div>
+                                <div className="stat-value" style={{ color: '#dc2626' }}>-{comparison.lost_clients_count}</div>
+                              </div>
+                            </div>
+
+                            <h4 style={{ marginBottom: '0.5rem' }}>Изменения по ТП</h4>
+                            <div className="table-wrapper">
+                              <table>
+                                <thead><tr><th>ТП</th><th>Выручка (тек.)</th><th>Выручка (пред.)</th><th>Изменение</th><th>Статус</th></tr></thead>
+                                <tbody>
+                                  {(comparison.rep_changes || []).map((r, i) => (
+                                    <tr key={i}>
+                                      <td>{r.name}</td>
+                                      <td>{fmt(r.revenue_current)}</td>
+                                      <td>{fmt(r.revenue_previous)}</td>
+                                      <td style={{ color: (r.revenue_change || 0) >= 0 ? '#16a34a' : '#dc2626' }}>
+                                        {(r.revenue_change || 0) >= 0 ? '+' : ''}{fmt(r.revenue_change)}
+                                        {r.revenue_change_pct != null ? ` (${r.revenue_change_pct >= 0 ? '+' : ''}${r.revenue_change_pct.toFixed(1)}%)` : ''}
+                                      </td>
+                                      <td>
+                                        <span className={`badge badge-${r.status === 'new' ? 'success' : r.status === 'lost' ? 'danger' : 'info'}`}>
+                                          {r.status === 'new' ? 'Новый' : r.status === 'lost' ? 'Ушёл' : 'Активный'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {comparison.new_products && comparison.new_products.length > 0 && (
+                              <div style={{ marginTop: '1rem' }}>
+                                <h4 style={{ marginBottom: '0.5rem' }}>Новые продукты ({comparison.new_products_count})</h4>
+                                <div style={{ fontSize: '0.85rem', color: '#16a34a' }}>{comparison.new_products.join(', ')}</div>
+                              </div>
+                            )}
+                            {comparison.lost_products && comparison.lost_products.length > 0 && (
+                              <div style={{ marginTop: '0.75rem' }}>
+                                <h4 style={{ marginBottom: '0.5rem' }}>Потерянные продукты ({comparison.lost_products_count})</h4>
+                                <div style={{ fontSize: '0.85rem', color: '#dc2626' }}>{comparison.lost_products.join(', ')}</div>
+                              </div>
+                            )}
+                          </>
+                        ) : null}
+                      </>
                     )}
                   </div>
                 )}

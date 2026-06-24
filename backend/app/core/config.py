@@ -22,11 +22,11 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # LLM (Anthropic Claude only)
-    ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_BASE_URL: str = "https://api.cheat-ai.shop/v1"
-    LLM_PROVIDER: str = "anthropic"
-    LLM_CHAT_MODEL: str = "claude-sonnet-4-20250514"
+    # LLM (aitunnel.ru — unified OpenAI-compatible API)
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://api.aitunnel.ru/v1"
+    LLM_CHAT_MODEL: str = "claude-sonnet-4"  # main model for chat
+    LLM_LIGHT_MODEL: str = "gpt-4.1-mini"  # lightweight model for extraction/classification
 
     # TrueConf Chatbot (via python-trueconf-bot / WebSocket API)
     TRUECONF_SERVER_ADDRESS: str = ""  # IP or FQDN, e.g. "192.168.1.158"
