@@ -62,9 +62,10 @@ async def _load_company_reference():
         for i, chunk in enumerate(chunks):
             item = KnowledgeItem(
                 document_id=doc.id,
+                title=f"Справочник компании (часть {i+1})",
                 content=chunk,
+                category="company_reference",
                 status="approved",
-                source_type="auto_reference",
                 priority=90,
             )
             db.add(item)
