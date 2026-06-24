@@ -181,8 +181,8 @@ def _get_token_sync(
         return token
 
 
-def _create_bot(token: str):
-    """Create Bot instance with pre-acquired token."""
+def _create_bot(token: str = None, use_credentials: bool = False):
+    """Create Bot instance with pre-acquired token or credentials."""
     from trueconf import Bot, Dispatcher, Router, Message, F
     from trueconf.enums import ParseMode
 
@@ -238,18 +238,36 @@ def _create_bot(token: str):
     use_https = settings.TRUECONF_BOT_USE_HTTPS
     web_port = settings.TRUECONF_BOT_WEB_PORT or None
 
-    bot = Bot(
-        server=settings.TRUECONF_SERVER_ADDRESS,
-        token=token,
-        dispatcher=dp,
-        verify_ssl=False,
-        https=use_https,
-        web_port=web_port,
-        receive_unread_messages=True,
-        skip_self_messages=True,
-        ws_max_retries=10,
-        ws_max_delay=60,
-    )
+    if use_credentials:
+        logger.info("Using Bot.from_credentials() for auth")
+        bot = Bot.from_credentials(
+            server=settings.TRUECONF_SERVER_ADDRESS,
+            username=settings.TRUECONF_BOT_USERNAME,
+            password=settings.TRUECONF_BOT_PASSWORD,
+            dispatcher=dp,
+            verify_ssl=False,
+            https=use_https,
+            web_port=web_port,
+            receive_unread_messages=True,
+            skip_self_messages=True,
+            ws_max_retries=10,
+            ws_max_delay=60,
+            debug=True,
+        )
+    else:
+        bot = Bot(
+            server=settings.TRUECONF_SERVER_ADDRESS,
+            token=token,
+            dispatcher=dp,
+            verify_ssl=False,
+            https=use_https,
+            web_port=web_port,
+            receive_unread_messages=True,
+            skip_self_messages=True,
+            ws_max_retries=10,
+            ws_max_delay=60,
+            debug=True,
+        )
 
     # The library's check_version() calls /api/v4/server which only exists
     # on the admin API (port 4307), not on Bridge (port 4309).
@@ -282,23 +300,8 @@ async def start_bot():
                 settings.TRUECONF_BOT_USE_HTTPS,
             )
 
-            if settings.TRUECONF_BOT_TOKEN:
-                token = settings.TRUECONF_BOT_TOKEN
-                logger.info("Using pre-issued bot token")
-            else:
-                token = await asyncio.to_thread(
-                    _get_token_sync,
-                    settings.TRUECONF_SERVER_ADDRESS,
-                    settings.TRUECONF_BOT_USERNAME,
-                    settings.TRUECONF_BOT_PASSWORD,
-                    settings.TRUECONF_BOT_USE_HTTPS,
-                    settings.TRUECONF_BOT_WEB_PORT,
-                )
-
-            if not token:
-                raise RuntimeError("Empty token received")
-
-            trueconf_bot = _create_bot(token)
+            # Use library's from_credentials for clean auth
+            trueconf_bot = _create_bot(use_credentials=True)
             logger.info("TrueConf bot authenticated, starting WebSocket...")
 
             await trueconf_bot.start()
