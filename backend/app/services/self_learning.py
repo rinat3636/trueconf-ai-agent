@@ -144,6 +144,11 @@ async def process_document_pipeline(
                     existing_id = conflict_data.get("existing_item_id")
                     if existing_id is None:
                         continue
+                    # Verify the referenced knowledge item exists
+                    existing_item = await db.get(KnowledgeItem, existing_id)
+                    if existing_item is None:
+                        logger.debug(f"Skipping conflict: existing_item_id={existing_id} not found in DB")
+                        continue
                     conflict = KnowledgeConflict(
                         new_item_id=ki.id,
                         existing_item_id=existing_id,
