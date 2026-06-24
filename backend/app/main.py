@@ -45,8 +45,10 @@ async def _load_company_reference():
         chunks = chunk_text(content)
 
         doc = Document(
+            filename="company_reference.txt",
             original_filename="company_reference.txt",
             file_type="txt",
+            file_path=ref_path,
             file_size=len(content),
             status="processed",
             chunk_count=len(chunks),
@@ -188,6 +190,9 @@ _cors_origins = [
     "http://localhost:3000",
     "http://localhost:80",
     "http://localhost",
+    "http://161.104.18.73:3000",
+    "http://161.104.18.73",
+    "https://conf.ice-mir.ru",
 ]
 # In production, add your actual domain here
 # For Cloudflare tunnels, we allow all *.trycloudflare.com
