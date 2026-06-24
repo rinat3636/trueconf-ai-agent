@@ -88,7 +88,7 @@ async def find_exact_correction(db: AsyncSession, question: str) -> Optional[Dic
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def generate_answer(question: str, db: AsyncSession, chat_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+async def generate_answer(question: str, db: AsyncSession, chat_history: Optional[List[Dict[str, str]]] = None, channel: str = "web") -> Dict[str, Any]:
     start_time = time.time()
 
     trace = {
@@ -178,9 +178,11 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
         await _cache_result(question_hash, result)
         return result
 
-    # --- Load bot settings from DB ---
-    from app.api.settings import get_bot_settings
-    bot_settings = await get_bot_settings(db)
+    # --- Load bot settings from DB (only for TrueConf channel) ---
+    bot_settings = {}
+    if channel == "trueconf":
+        from app.api.settings import get_bot_settings
+        bot_settings = await get_bot_settings(db)
 
     # --- STEP 3: Corporate Rules Loading ---
     rules_data = await load_corporate_rules(db)

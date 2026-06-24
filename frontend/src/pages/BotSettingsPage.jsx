@@ -90,7 +90,7 @@ export default function BotSettingsPage() {
     return (
       <div>
         <div className="page-header">
-          <h1>Настройки чат-бота</h1>
+          <h1>Настройки TrueConf бота</h1>
           <p>Загрузка...</p>
         </div>
       </div>
@@ -100,8 +100,8 @@ export default function BotSettingsPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>Настройки чат-бота</h1>
-        <p>Управление поведением ИИ-ассистента в админке и TrueConf</p>
+        <h1>Настройки TrueConf бота</h1>
+        <p>Управление поведением ИИ-ассистента только в TrueConf чатах. На чат в админке эти настройки не влияют.</p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -113,7 +113,7 @@ export default function BotSettingsPage() {
           </div>
           <div style={{ padding: '1rem' }}>
             <p style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-              Дополнительные указания для ИИ. Они будут добавлены к системному промпту бота.
+              Дополнительные указания для ИИ в TrueConf. Они будут добавлены к системному промпту бота при ответах в TrueConf чатах.
             </p>
             <textarea
               className="form-control"
