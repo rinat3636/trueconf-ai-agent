@@ -246,12 +246,22 @@ async def _process_trueconf_file(message, sender_id: str, doc):
 async def _try_learn_from_chat(sender_id: str, message_text: str):
     """Evaluate if a chat message contains useful knowledge and extract it."""
     from app.core.llm import light_completion
-    from app.models.knowledge import KnowledgeItem, ModerationQueue
+    from app.models.knowledge import ModerationQueue
+    from app.models.system import SystemSetting
 
     if len(message_text) < 50:
         return
 
     try:
+        # Check if self-learning is enabled in bot settings
+        async with async_session() as db:
+            result = await db.execute(
+                select(SystemSetting).where(SystemSetting.key == "bot_settings")
+            )
+            setting = result.scalar_one_or_none()
+            if setting and isinstance(setting.value, dict):
+                if not setting.value.get("enable_self_learning", True):
+                    return
         evaluation = await light_completion(
             messages=[
                 {
