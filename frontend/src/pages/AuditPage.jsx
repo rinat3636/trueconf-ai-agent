@@ -29,7 +29,7 @@ export default function AuditPage() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <h1>Журнал аудита</h1>
           <p>История всех действий в системе</p>
@@ -41,15 +41,15 @@ export default function AuditPage() {
 
       <div className="card">
         <div className="card-header">
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <input className="form-control" style={{ width: '200px' }} value={actionFilter}
-              onChange={e => setActionFilter(e.target.value)} placeholder="Фильтр по действию..." />
-            <select className="form-control" style={{ width: '120px' }} value={limit}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input className="form-control" style={{ flex: '1 1 140px', minWidth: 0 }} value={actionFilter}
+              onChange={e => setActionFilter(e.target.value)} placeholder="Фильтр..." />
+            <select className="form-control" style={{ width: 'auto', minWidth: '100px' }} value={limit}
               onChange={e => setLimit(parseInt(e.target.value))}>
-              <option value="50">50 записей</option>
-              <option value="100">100 записей</option>
-              <option value="200">200 записей</option>
-              <option value="500">500 записей</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+              <option value="500">500</option>
             </select>
           </div>
           <span style={{ color: '#6b7280', fontSize: '0.85rem' }}>{logs.length} записей</span>

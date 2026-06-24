@@ -115,14 +115,17 @@ export default function UsersPage() {
       <label style={{ marginBottom: '0.5rem', display: 'block' }}>Возможности пользователя</label>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
         {PERMISSION_OPTIONS.map(p => (
-          <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+          <label key={p.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1.4 }}>
             <input
               type="checkbox"
               checked={!!currentPerms[p.key]}
               onChange={() => togglePermission(p.key)}
+              style={{ marginTop: '0.2rem', flexShrink: 0 }}
             />
-            <span>{p.label}</span>
-            <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>— {p.description}</span>
+            <span>
+              {p.label}
+              <span style={{ color: '#6b7280', fontSize: '0.7rem', display: 'block' }}>{p.description}</span>
+            </span>
           </label>
         ))}
       </div>
