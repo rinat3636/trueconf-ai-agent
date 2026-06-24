@@ -69,6 +69,8 @@ export default function SalesPage() {
     setComparison(null)
     setCompareReport(null)
     setActiveTab('overview')
+    setClientsPage(1)
+    setProductsPage(1)
     if (report.status !== 'ready' && report.status !== 'processed') return
     setLoadingAnalytics(true)
     try {

@@ -10,6 +10,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState(null)
   const [health, setHealth] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => { loadData() }, [])
@@ -23,12 +24,16 @@ export default function DashboardPage() {
       ])
       setStats(s)
       setHealth(h)
-    } catch (err) { console.error(err) }
+    } catch (err) { console.error(err); setError('Ошибка загрузки данных. Проверьте подключение.') }
     finally { setLoading(false) }
   }
 
   if (loading) {
     return <div className="loading"><div className="spinner" /> Загрузка...</div>
+  }
+
+  if (error && !stats) {
+    return <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>{error}</div>
   }
 
   const cards = stats ? [

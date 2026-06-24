@@ -211,7 +211,7 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
             q_lower = question.lower()
             keywords = [w for w in q_lower.split() if len(w) > 3]
             ki_result = await db.execute(
-                select(KnowledgeItem).where(KnowledgeItem.status == "approved")
+                select(KnowledgeItem).where(KnowledgeItem.status == "approved").limit(500)
             )
             all_knowledge = ki_result.scalars().all()
             matched = []
@@ -347,16 +347,16 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
         top_scores = [item["score"] for item in context_items[:3]]
         confidence = min(sum(top_scores) / len(top_scores) + 0.3, 1.0)
     if sales_context:
-        confidence = max(confidence, 0.95)
+        confidence = max(confidence, 0.85)
     if context_items and sales_context:
-        confidence = 1.0
+        confidence = 0.95
     if not context_items and not sales_context:
         q_lower = question.lower().strip()
         greetings = ["привет", "здравствуй", "добрый день", "добрый вечер", "доброе утро", "хай", "hello", "hi"]
         if any(g in q_lower for g in greetings):
-            confidence = 0.95
+            confidence = 0.9
         else:
-            confidence = 0.75
+            confidence = 0.4
 
     # --- STEP 7: Tracing ---
     elapsed = int((time.time() - start_time) * 1000)

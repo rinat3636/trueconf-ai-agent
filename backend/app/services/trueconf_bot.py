@@ -105,8 +105,22 @@ async def handle_incoming_message(
         db.add(user_msg)
         await db.flush()
 
+        # Load chat history for context
+        history_result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session.id)
+            .where(ChatMessage.id != user_msg.id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(10)
+        )
+        history_msgs = list(reversed(history_result.scalars().all()))
+        chat_history = [
+            {"role": m.role, "content": m.content}
+            for m in history_msgs
+        ]
+
         try:
-            answer_data = await generate_answer(message_text, db)
+            answer_data = await generate_answer(message_text, db, chat_history=chat_history)
         except Exception as e:
             logger.error("RAG pipeline error for TrueConf message: %s", e)
             answer_data = {

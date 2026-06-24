@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     QDRANT_URL: str = "http://localhost:6333"
 
     # JWT
-    SECRET_KEY: str = "change-me-in-production-use-strong-secret-key"
+    SECRET_KEY: str = "change-me-in-production-use-strong-secret-key"  # overridden by .env
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7

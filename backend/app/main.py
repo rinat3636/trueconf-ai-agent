@@ -13,6 +13,7 @@ from app.core.redis import close_redis
 from app.core.qdrant import init_collections
 from app.core.rate_limiter import RateLimitMiddleware
 from app.models.user import User
+from app.core.llm import close_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,7 @@ async def lifespan(app: FastAPI):
             pass
 
     await close_redis()
+    await close_httpx_client()
     logger.info("Shutdown complete")
 
 
@@ -181,9 +183,18 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+# CORS: allow frontend origin + tunnel URLs
+_cors_origins = [
+    "http://localhost:3000",
+    "http://localhost:80",
+    "http://localhost",
+]
+# In production, add your actual domain here
+# For Cloudflare tunnels, we allow all *.trycloudflare.com
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"https://.*\.trycloudflare\.com",
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

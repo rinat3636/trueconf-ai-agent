@@ -31,6 +31,14 @@ export default function KnowledgePage() {
 
   useEffect(() => { loadData() }, [category])
 
+  // Auto-refresh when documents are processing
+  useEffect(() => {
+    const hasProcessing = documents.some(d => d.status === 'processing' || d.status === 'pending')
+    if (!hasProcessing) return
+    const interval = setInterval(loadData, 5000)
+    return () => clearInterval(interval)
+  }, [documents])
+
   const loadData = async () => {
     try {
       const [docs, items] = await Promise.all([
