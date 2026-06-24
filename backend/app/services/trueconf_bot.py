@@ -282,14 +282,18 @@ async def start_bot():
                 settings.TRUECONF_BOT_USE_HTTPS,
             )
 
-            token = await asyncio.to_thread(
-                _get_token_sync,
-                settings.TRUECONF_SERVER_ADDRESS,
-                settings.TRUECONF_BOT_USERNAME,
-                settings.TRUECONF_BOT_PASSWORD,
-                settings.TRUECONF_BOT_USE_HTTPS,
-                settings.TRUECONF_BOT_WEB_PORT,
-            )
+            if settings.TRUECONF_BOT_TOKEN:
+                token = settings.TRUECONF_BOT_TOKEN
+                logger.info("Using pre-issued bot token")
+            else:
+                token = await asyncio.to_thread(
+                    _get_token_sync,
+                    settings.TRUECONF_SERVER_ADDRESS,
+                    settings.TRUECONF_BOT_USERNAME,
+                    settings.TRUECONF_BOT_PASSWORD,
+                    settings.TRUECONF_BOT_USE_HTTPS,
+                    settings.TRUECONF_BOT_WEB_PORT,
+                )
 
             if not token:
                 raise RuntimeError("Empty token received")
