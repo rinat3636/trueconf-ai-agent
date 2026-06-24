@@ -65,7 +65,7 @@ export default function Sidebar({ user, setUser, isOpen, onClose }) {
 
           <div className="sidebar-section">Система</div>
           <ul className="sidebar-nav">
-            <li><NavLink to="/bot-settings"><Bot size={18} /> Настройки бота</NavLink></li>
+            <li><NavLink to="/bot-settings"><Bot size={18} /> Настройки TrueConf</NavLink></li>
             <li><NavLink to="/monitoring"><Activity size={18} /> Мониторинг</NavLink></li>
             <li><NavLink to="/audit"><ClipboardList size={18} /> Аудит</NavLink></li>
             {isSuperAdmin && (

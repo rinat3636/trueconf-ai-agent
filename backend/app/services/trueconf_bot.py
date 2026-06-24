@@ -124,7 +124,7 @@ async def handle_incoming_message(
         ]
 
         try:
-            answer_data = await generate_answer(message_text, db, chat_history=chat_history)
+            answer_data = await generate_answer(message_text, db, chat_history=chat_history, channel="trueconf")
         except Exception as e:
             logger.error("RAG pipeline error for TrueConf message: %s", e)
             answer_data = {
