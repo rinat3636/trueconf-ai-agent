@@ -4,7 +4,7 @@ import {
   Package, Brain, Trash2, GitCompare, RefreshCw, TrendingUp,
   TrendingDown, DollarSign, Percent, FileSpreadsheet, Clock,
   AlertTriangle, ChevronLeft, ChevronRight, Search, Download,
-  ArrowUpRight, ArrowDownRight, Minus
+  ArrowUpRight, ArrowDownRight, Minus, Menu, X
 } from 'lucide-react'
 import { api } from '../services/api'
 
@@ -35,6 +35,7 @@ export default function SalesPage() {
   const [dragOver, setDragOver] = useState(false)
   const [managersSort, setManagersSort] = useState({ key: 'profit', dir: 'desc' })
   const [clientsSort, setClientsSort] = useState({ key: 'revenue', dir: 'desc' })
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const fileRef = useRef(null)
   const PAGE_SIZE = 50
 
@@ -96,6 +97,7 @@ export default function SalesPage() {
 
   const selectReport = async (report) => {
     setSelectedReport(report)
+    setSidebarOpen(false)
     setProducts(null)
     setRecommendations([])
     setFullAnalysis(null)
@@ -260,7 +262,7 @@ export default function SalesPage() {
     const totalPages = Math.ceil(total / pageSize)
     if (totalPages <= 1) return null
     return (
-      <div style={styles.pagination}>
+      <div className="sales-pagination">
         <span style={{ color: '#6b7280', fontSize: '0.8rem' }}>
           {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} из {total}
         </span>
@@ -288,14 +290,14 @@ export default function SalesPage() {
   }
 
   const TABS = [
-    { key: 'overview', icon: BarChart3, label: 'Обзор' },
-    { key: 'managers', icon: Users, label: 'Торговые представители' },
-    { key: 'clients', icon: ShoppingBag, label: 'Клиенты' },
-    { key: 'products', icon: Package, label: 'Продукты' },
-    { key: 'compare', icon: GitCompare, label: 'Сравнение периодов' },
-    { key: 'recommendations', icon: Lightbulb, label: 'ИИ-рекомендации' },
-    { key: 'full', icon: Brain, label: 'Полный ИИ-анализ' },
-    { key: 'ask', icon: Send, label: 'Задать вопрос ИИ' },
+    { key: 'overview', icon: BarChart3, label: 'Обзор', shortLabel: 'Обзор' },
+    { key: 'managers', icon: Users, label: 'ТП', shortLabel: 'ТП' },
+    { key: 'clients', icon: ShoppingBag, label: 'Клиенты', shortLabel: 'Клиенты' },
+    { key: 'products', icon: Package, label: 'Продукты', shortLabel: 'Продукты' },
+    { key: 'compare', icon: GitCompare, label: 'Сравнение', shortLabel: 'Сравн.' },
+    { key: 'recommendations', icon: Lightbulb, label: 'Рекомендации', shortLabel: 'Рек.' },
+    { key: 'full', icon: Brain, label: 'ИИ-анализ', shortLabel: 'Анализ' },
+    { key: 'ask', icon: Send, label: 'Вопрос ИИ', shortLabel: 'ИИ' },
   ]
 
   const QUICK_QUESTIONS = [
@@ -307,25 +309,31 @@ export default function SalesPage() {
   ]
 
   return (
-    <div>
-      <div className="page-header">
-        <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <BarChart3 size={28} style={{ color: '#2563eb' }} />
-          Аналитика продаж
-        </h1>
-        <p>Загрузка отчётов, ИИ-анализ данных, сравнение периодов и рекомендации</p>
+    <div className="sales-page">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <BarChart3 size={24} style={{ color: '#2563eb' }} />
+            Аналитика продаж
+          </h1>
+          <p>Загрузка отчётов, ИИ-анализ данных и рекомендации</p>
+        </div>
+        <button
+          className="sales-sidebar-toggle"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          title="Показать/скрыть панель отчётов"
+        >
+          {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '1.5rem' }}>
+      <div className="sales-layout">
         {/* LEFT SIDEBAR: Reports */}
-        <div style={{ width: '320px', flexShrink: 0 }}>
+        {sidebarOpen && <div className="sales-overlay" onClick={() => setSidebarOpen(false)} />}
+        <div className={`sales-sidebar ${sidebarOpen ? 'open' : ''}`}>
           {/* Upload Area */}
           <div
-            style={{
-              ...styles.uploadArea,
-              borderColor: dragOver ? '#2563eb' : '#d1d5db',
-              background: dragOver ? '#eff6ff' : '#fafafa',
-            }}
+            className={`sales-upload-area ${dragOver ? 'drag-over' : ''}`}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -346,7 +354,7 @@ export default function SalesPage() {
 
           {/* Reports List */}
           <div className="card" style={{ padding: 0, marginTop: '1rem' }}>
-            <div style={styles.reportListHeader}>
+            <div className="sales-report-list-header">
               <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
                 <FileSpreadsheet size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
                 Отчёты ({reports.length})
@@ -356,11 +364,7 @@ export default function SalesPage() {
               {reports.map(r => (
                 <div
                   key={r.id}
-                  style={{
-                    ...styles.reportItem,
-                    background: selectedReport?.id === r.id ? '#eff6ff' : 'white',
-                    borderLeft: selectedReport?.id === r.id ? '3px solid #2563eb' : '3px solid transparent',
-                  }}
+                  className={`sales-report-item ${selectedReport?.id === r.id ? 'active' : ''}`}
                 >
                   <div onClick={() => selectReport(r)} style={{ flex: 1, cursor: 'pointer' }}>
                     <div style={{ fontWeight: 500, fontSize: '0.85rem', color: '#1f2937' }}>
@@ -381,9 +385,8 @@ export default function SalesPage() {
                     )}
                   </div>
                   <button
-                    className="btn btn-sm"
                     onClick={(e) => { e.stopPropagation(); handleDeleteReport(r.id) }}
-                    style={{ ...styles.deleteBtn }}
+                    className="sales-delete-btn"
                     title="Удалить отчёт"
                   >
                     <Trash2 size={13} />
@@ -402,7 +405,7 @@ export default function SalesPage() {
         </div>
 
         {/* MAIN CONTENT */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="sales-main">
           {!selectedReport ? (
             <div className="card" style={{ textAlign: 'center', padding: '4rem 2rem' }}>
               <BarChart3 size={56} color="#d1d5db" style={{ margin: '0 auto 1rem' }} />
@@ -418,82 +421,46 @@ export default function SalesPage() {
           ) : analytics ? (
             <>
               {/* KPI Cards */}
-              <div style={styles.kpiGrid}>
-                <div style={{ ...styles.kpiCard, borderTop: '3px solid #2563eb' }}>
-                  <div style={styles.kpiIconWrap}>
-                    <DollarSign size={20} color="#2563eb" />
+              <div className="sales-kpi-grid">
+                {[
+                  { color: '#2563eb', bg: '#eff6ff', icon: DollarSign, label: 'Выручка', value: fmtCurrency(analytics.total_revenue), unit: 'руб.' },
+                  { color: '#16a34a', bg: '#f0fdf4', icon: TrendingUp, label: 'Прибыль', value: fmtCurrency(analytics.total_profit), unit: 'руб.', valueColor: '#16a34a' },
+                  { color: '#7c3aed', bg: '#f5f3ff', icon: Percent, label: 'Маржа', value: fmtPct(analytics.avg_margin), valueColor: '#7c3aed' },
+                  { color: '#ea580c', bg: '#fff7ed', icon: Users, label: 'ТП', value: analytics.manager_count },
+                  { color: '#0891b2', bg: '#ecfeff', icon: ShoppingBag, label: 'Клиенты', value: fmt(analytics.client_count) },
+                  { color: '#ca8a04', bg: '#fefce8', icon: Package, label: 'SKU', value: fmt(analytics.product_count) },
+                ].map((kpi, idx) => (
+                  <div key={idx} className="sales-kpi-card" style={{ borderTop: `3px solid ${kpi.color}` }}>
+                    <div className="sales-kpi-icon" style={{ background: kpi.bg }}>
+                      <kpi.icon size={18} color={kpi.color} />
+                    </div>
+                    <div>
+                      <div className="sales-kpi-label">{kpi.label}</div>
+                      <div className="sales-kpi-value" style={kpi.valueColor ? { color: kpi.valueColor } : {}}>
+                        {kpi.value}{kpi.unit && <span className="sales-kpi-unit"> {kpi.unit}</span>}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div style={styles.kpiLabel}>Выручка</div>
-                    <div style={styles.kpiValue}>{fmtCurrency(analytics.total_revenue)} <span style={styles.kpiUnit}>руб.</span></div>
-                  </div>
-                </div>
-                <div style={{ ...styles.kpiCard, borderTop: '3px solid #16a34a' }}>
-                  <div style={{ ...styles.kpiIconWrap, background: '#f0fdf4' }}>
-                    <TrendingUp size={20} color="#16a34a" />
-                  </div>
-                  <div>
-                    <div style={styles.kpiLabel}>Прибыль</div>
-                    <div style={{ ...styles.kpiValue, color: '#16a34a' }}>{fmtCurrency(analytics.total_profit)} <span style={styles.kpiUnit}>руб.</span></div>
-                  </div>
-                </div>
-                <div style={{ ...styles.kpiCard, borderTop: '3px solid #7c3aed' }}>
-                  <div style={{ ...styles.kpiIconWrap, background: '#f5f3ff' }}>
-                    <Percent size={20} color="#7c3aed" />
-                  </div>
-                  <div>
-                    <div style={styles.kpiLabel}>Средняя маржа</div>
-                    <div style={{ ...styles.kpiValue, color: '#7c3aed' }}>{fmtPct(analytics.avg_margin)}</div>
-                  </div>
-                </div>
-                <div style={{ ...styles.kpiCard, borderTop: '3px solid #ea580c' }}>
-                  <div style={{ ...styles.kpiIconWrap, background: '#fff7ed' }}>
-                    <Users size={20} color="#ea580c" />
-                  </div>
-                  <div>
-                    <div style={styles.kpiLabel}>Торг. представители</div>
-                    <div style={styles.kpiValue}>{analytics.manager_count}</div>
-                  </div>
-                </div>
-                <div style={{ ...styles.kpiCard, borderTop: '3px solid #0891b2' }}>
-                  <div style={{ ...styles.kpiIconWrap, background: '#ecfeff' }}>
-                    <ShoppingBag size={20} color="#0891b2" />
-                  </div>
-                  <div>
-                    <div style={styles.kpiLabel}>Клиенты</div>
-                    <div style={styles.kpiValue}>{fmt(analytics.client_count)}</div>
-                  </div>
-                </div>
-                <div style={{ ...styles.kpiCard, borderTop: '3px solid #ca8a04' }}>
-                  <div style={{ ...styles.kpiIconWrap, background: '#fefce8' }}>
-                    <Package size={20} color="#ca8a04" />
-                  </div>
-                  <div>
-                    <div style={styles.kpiLabel}>Продукты (SKU)</div>
-                    <div style={styles.kpiValue}>{fmt(analytics.product_count)}</div>
-                  </div>
-                </div>
+                ))}
               </div>
 
               {/* Tabs */}
               <div className="card" style={{ padding: 0 }}>
-                <div style={styles.tabBar}>
+                <div className="sales-tab-bar">
                   {TABS.map(tab => (
                     <button
                       key={tab.key}
-                      style={{
-                        ...styles.tab,
-                        ...(activeTab === tab.key ? styles.tabActive : {}),
-                      }}
+                      className={`sales-tab ${activeTab === tab.key ? 'active' : ''}`}
                       onClick={() => {
                         setActiveTab(tab.key)
                         if (tab.key === 'products' && !products) loadProducts()
                         if (tab.key === 'recommendations' && recommendations.length === 0) loadRecommendations()
                         if (tab.key === 'full' && !fullAnalysis) loadFullAnalysis()
                       }}
+                      title={tab.label}
                     >
-                      <tab.icon size={15} />
-                      <span>{tab.label}</span>
+                      <tab.icon size={14} />
+                      <span className="sales-tab-label">{tab.label}</span>
                     </button>
                   ))}
                 </div>
@@ -504,7 +471,7 @@ export default function SalesPage() {
                   {activeTab === 'overview' && (
                     <div className="grid-2">
                       <div>
-                        <h4 style={styles.sectionTitle}>
+                        <h4 className="sales-section-title">
                           <TrendingUp size={16} color="#16a34a" /> Лучшие ТП по прибыли
                         </h4>
                         <div className="table-wrapper">
@@ -516,7 +483,7 @@ export default function SalesPage() {
                               {(analytics.top_managers || []).map((m, i) => (
                                 <tr key={i}>
                                   <td style={{ fontWeight: 500 }}>
-                                    <span style={styles.rankBadge}>{i + 1}</span>
+                                    <span className="sales-rank-badge">{i + 1}</span>
                                     {m.name}
                                   </td>
                                   <td style={{ textAlign: 'right', fontWeight: 500, color: '#16a34a' }}>{fmt(m.profit)}</td>
@@ -528,7 +495,7 @@ export default function SalesPage() {
                         </div>
                       </div>
                       <div>
-                        <h4 style={styles.sectionTitle}>
+                        <h4 className="sales-section-title">
                           <TrendingDown size={16} color="#dc2626" /> Слабые ТП (низкая маржа)
                         </h4>
                         <div className="table-wrapper">
@@ -635,7 +602,7 @@ export default function SalesPage() {
                       ) : (
                         <>
                           {products.sku_dependencies && products.sku_dependencies.length > 0 && (
-                            <div style={styles.alertWarning}>
+                            <div className="sales-alert-warning">
                               <AlertTriangle size={16} color="#854d0e" />
                               <div>
                                 <strong>Зависимость от SKU</strong>
@@ -653,7 +620,7 @@ export default function SalesPage() {
                             </div>
                           )}
                           {products.low_margin_products && products.low_margin_products.length > 0 && (
-                            <div style={styles.alertDanger}>
+                            <div className="sales-alert-danger">
                               <TrendingDown size={16} color="#991b1b" />
                               <div>
                                 <strong>Низкомаржинальные продукты</strong>
@@ -738,26 +705,26 @@ export default function SalesPage() {
                             <div className="loading"><div className="spinner" /> Сравнение отчётов...</div>
                           ) : comparison ? (
                             <>
-                              <div style={styles.kpiGrid}>
-                                <div style={{ ...styles.kpiCard, borderTop: `3px solid ${(comparison.overview.revenue_change || 0) >= 0 ? '#16a34a' : '#dc2626'}` }}>
-                                  <div style={styles.kpiLabel}>Выручка (изменение)</div>
+                              <div className="sales-kpi-grid">
+                                <div className="sales-kpi-card" style={{ borderTop: `3px solid ${(comparison.overview.revenue_change || 0) >= 0 ? '#16a34a' : '#dc2626'}` }}>
+                                  <div className="sales-kpi-label">Выручка (изм.)</div>
                                   <ChangeIndicator value={comparison.overview.revenue_change} />
                                 </div>
-                                <div style={{ ...styles.kpiCard, borderTop: `3px solid ${(comparison.overview.profit_change || 0) >= 0 ? '#16a34a' : '#dc2626'}` }}>
-                                  <div style={styles.kpiLabel}>Прибыль (изменение)</div>
+                                <div className="sales-kpi-card" style={{ borderTop: `3px solid ${(comparison.overview.profit_change || 0) >= 0 ? '#16a34a' : '#dc2626'}` }}>
+                                  <div className="sales-kpi-label">Прибыль (изм.)</div>
                                   <ChangeIndicator value={comparison.overview.profit_change} />
                                 </div>
-                                <div style={{ ...styles.kpiCard, borderTop: '3px solid #16a34a' }}>
-                                  <div style={styles.kpiLabel}>Новые клиенты</div>
+                                <div className="sales-kpi-card" style={{ borderTop: '3px solid #16a34a' }}>
+                                  <div className="sales-kpi-label">Новые клиенты</div>
                                   <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#16a34a' }}>+{comparison.new_clients_count}</div>
                                 </div>
-                                <div style={{ ...styles.kpiCard, borderTop: '3px solid #dc2626' }}>
-                                  <div style={styles.kpiLabel}>Потерянные клиенты</div>
+                                <div className="sales-kpi-card" style={{ borderTop: '3px solid #dc2626' }}>
+                                  <div className="sales-kpi-label">Потерянные клиенты</div>
                                   <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#dc2626' }}>-{comparison.lost_clients_count}</div>
                                 </div>
                               </div>
 
-                              <h4 style={styles.sectionTitle}>Изменения по ТП</h4>
+                              <h4 className="sales-section-title">Изменения по ТП</h4>
                               <div className="table-wrapper">
                                 <table>
                                   <thead>
@@ -796,7 +763,7 @@ export default function SalesPage() {
 
                               {comparison.new_products && comparison.new_products.length > 0 && (
                                 <div style={{ marginTop: '1rem' }}>
-                                  <h4 style={styles.sectionTitle}>Новые продукты ({comparison.new_products_count})</h4>
+                                  <h4 className="sales-section-title">Новые продукты ({comparison.new_products_count})</h4>
                                   <div style={{ fontSize: '0.85rem', color: '#16a34a', lineHeight: 1.8 }}>
                                     {comparison.new_products.join(', ')}
                                   </div>
@@ -804,7 +771,7 @@ export default function SalesPage() {
                               )}
                               {comparison.lost_products && comparison.lost_products.length > 0 && (
                                 <div style={{ marginTop: '0.75rem' }}>
-                                  <h4 style={styles.sectionTitle}>Потерянные продукты ({comparison.lost_products_count})</h4>
+                                  <h4 className="sales-section-title">Потерянные продукты ({comparison.lost_products_count})</h4>
                                   <div style={{ fontSize: '0.85rem', color: '#dc2626', lineHeight: 1.8 }}>
                                     {comparison.lost_products.join(', ')}
                                   </div>
@@ -830,8 +797,8 @@ export default function SalesPage() {
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                           {recommendations.map((r, i) => (
-                            <div key={i} style={styles.recommendationCard}>
-                              <div style={styles.recommendationNumber}>{i + 1}</div>
+                            <div key={i} className="sales-rec-card">
+                              <div className="sales-rec-num">{i + 1}</div>
                               <div style={{ flex: 1, lineHeight: 1.7, fontSize: '0.9rem' }}>{r}</div>
                             </div>
                           ))}
@@ -871,7 +838,7 @@ export default function SalesPage() {
                   {activeTab === 'ask' && (
                     <div>
                       <div style={{ marginBottom: '1rem' }}>
-                        <h4 style={{ ...styles.sectionTitle, marginBottom: '0.75rem' }}>
+                        <h4 className="sales-section-title">
                           <Search size={16} color="#2563eb" /> Задайте вопрос по данным продаж
                         </h4>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -935,182 +902,4 @@ export default function SalesPage() {
   )
 }
 
-const styles = {
-  uploadArea: {
-    border: '2px dashed #d1d5db',
-    borderRadius: '0.75rem',
-    padding: '1.5rem',
-    textAlign: 'center',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-  },
-  reportListHeader: {
-    padding: '0.875rem 1rem',
-    borderBottom: '1px solid #e5e7eb',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  reportItem: {
-    padding: '0.75rem 1rem',
-    borderBottom: '1px solid #f3f4f6',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '0.5rem',
-    transition: 'all 0.15s',
-  },
-  deleteBtn: {
-    background: 'none',
-    border: '1px solid transparent',
-    color: '#9ca3af',
-    borderRadius: '0.375rem',
-    padding: '0.25rem',
-    cursor: 'pointer',
-    transition: 'all 0.15s',
-  },
-  kpiGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '1rem',
-    marginBottom: '1.5rem',
-  },
-  kpiCard: {
-    background: 'white',
-    borderRadius: '0.75rem',
-    border: '1px solid #e5e7eb',
-    padding: '1.25rem',
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '0.75rem',
-  },
-  kpiIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: '0.625rem',
-    background: '#eff6ff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  kpiLabel: {
-    fontSize: '0.75rem',
-    color: '#6b7280',
-    marginBottom: '0.125rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.025em',
-  },
-  kpiValue: {
-    fontSize: '1.5rem',
-    fontWeight: 700,
-    color: '#1f2937',
-    lineHeight: 1.2,
-  },
-  kpiUnit: {
-    fontSize: '0.8rem',
-    fontWeight: 400,
-    color: '#6b7280',
-  },
-  tabBar: {
-    display: 'flex',
-    gap: '0',
-    borderBottom: '1px solid #e5e7eb',
-    overflowX: 'auto',
-    padding: '0',
-  },
-  tab: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.375rem',
-    padding: '0.875rem 1rem',
-    fontSize: '0.8rem',
-    fontWeight: 500,
-    color: '#6b7280',
-    background: 'none',
-    border: 'none',
-    borderBottom: '2px solid transparent',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    transition: 'all 0.15s',
-  },
-  tabActive: {
-    color: '#2563eb',
-    borderBottomColor: '#2563eb',
-    background: '#f8faff',
-  },
-  sectionTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    fontSize: '0.95rem',
-    fontWeight: 600,
-    color: '#1f2937',
-    marginBottom: '0.75rem',
-  },
-  rankBadge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 22,
-    height: 22,
-    borderRadius: '50%',
-    background: '#eff6ff',
-    color: '#2563eb',
-    fontSize: '0.7rem',
-    fontWeight: 700,
-    marginRight: '0.5rem',
-  },
-  pagination: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: '0.75rem',
-    paddingTop: '0.75rem',
-    borderTop: '1px solid #f3f4f6',
-  },
-  alertWarning: {
-    display: 'flex',
-    gap: '0.75rem',
-    marginBottom: '1rem',
-    padding: '1rem',
-    background: '#fefce8',
-    borderRadius: '0.75rem',
-    border: '1px solid #fef08a',
-    fontSize: '0.85rem',
-    color: '#854d0e',
-  },
-  alertDanger: {
-    display: 'flex',
-    gap: '0.75rem',
-    marginBottom: '1rem',
-    padding: '1rem',
-    background: '#fef2f2',
-    borderRadius: '0.75rem',
-    border: '1px solid #fecaca',
-    fontSize: '0.85rem',
-    color: '#991b1b',
-  },
-  recommendationCard: {
-    display: 'flex',
-    gap: '1rem',
-    padding: '1rem',
-    background: '#f9fafb',
-    borderRadius: '0.75rem',
-    border: '1px solid #e5e7eb',
-    alignItems: 'flex-start',
-  },
-  recommendationNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    background: '#2563eb',
-    color: 'white',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '0.8rem',
-    fontWeight: 700,
-    flexShrink: 0,
-  },
-}
+
