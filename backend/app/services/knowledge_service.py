@@ -4,7 +4,7 @@ import logging
 from typing import List, Optional, Dict, Any
 
 from app.core.config import settings
-from app.core.llm import chat_completion, get_embedding
+from app.core.llm import chat_completion, light_completion, get_embedding
 from app.core.qdrant import (
     upsert_vector, search_vectors, delete_by_filter,
     KNOWLEDGE_COLLECTION, CORRECTIONS_COLLECTION,
@@ -302,7 +302,7 @@ async def check_conflict_with_llm(
 
 Ответ:"""
 
-    result = await chat_completion(
+    result = await light_completion(
         messages=[
             {"role": "system", "content": "Ты — система анализа конфликтов знаний. Ответь ОДНИМ словом."},
             {"role": "user", "content": prompt},
@@ -352,7 +352,7 @@ async def extract_knowledge_from_text(text: str) -> List[dict]:
     if len(text) > 8000:
         text = text[:8000]
 
-    result_text = await chat_completion(
+    result_text = await light_completion(
         messages=[
             {
                 "role": "system",
@@ -418,7 +418,7 @@ async def generate_document_summary(text: str) -> str:
     if len(text) > 8000:
         text = text[:8000]
 
-    return await chat_completion(
+    return await light_completion(
         messages=[
             {
                 "role": "system",
@@ -449,7 +449,7 @@ async def analyze_unanswered_questions(
 
     questions_text = "\n".join(f"- {q}" for q in questions[:20])
 
-    result = await chat_completion(
+    result = await light_completion(
         messages=[
             {
                 "role": "system",
