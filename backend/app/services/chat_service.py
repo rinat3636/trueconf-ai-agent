@@ -242,7 +242,7 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
             logger.warning("DB fallback search failed: %s", e)
 
     trace["pipeline"]["rag_search"] = {
-        "query_embedding_model": settings.LLM_EMBEDDING_MODEL,
+        "query_embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
         "results_count": len(context_items),
         "threshold": settings.RAG_SCORE_THRESHOLD,
         "categories_searched": intent.get("categories"),
@@ -339,7 +339,7 @@ async def generate_answer(question: str, db: AsyncSession, chat_history: Optiona
 
     trace["pipeline"]["generation_time_ms"] = llm_time
     trace["model"] = settings.LLM_CHAT_MODEL
-    trace["provider"] = settings.LLM_PROVIDER
+    trace["provider"] = "aitunnel"
 
     # --- Confidence calculation ---
     confidence = 0.0
