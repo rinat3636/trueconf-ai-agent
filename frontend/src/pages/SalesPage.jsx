@@ -310,7 +310,7 @@ export default function SalesPage() {
 
   return (
     <div className="sales-page">
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <BarChart3 size={24} style={{ color: '#2563eb' }} />

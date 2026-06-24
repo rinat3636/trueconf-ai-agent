@@ -40,8 +40,8 @@ export default function ChatViewerPage() {
         <p>Просмотр всех сессий и трассировка ответов</p>
       </div>
 
-      <div style={{ display: 'flex', gap: '1.5rem' }}>
-        <div style={{ width: '320px', flexShrink: 0 }}>
+      <div className="chat-viewer-layout">
+        <div className="chat-viewer-sessions">
           <div className="card">
             <div className="card-header">
               <span className="card-title">Сессии ({sessions.length})</span>
@@ -79,7 +79,7 @@ export default function ChatViewerPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1 }}>
+        <div className="chat-viewer-content">
           {!selectedSession ? (
             <div className="card">
               <div className="empty-state">

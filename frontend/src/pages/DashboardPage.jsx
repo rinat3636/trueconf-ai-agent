@@ -49,7 +49,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <h1>Панель управления</h1>
           <p>Обзор системы ИИ-агента</p>
@@ -67,7 +67,7 @@ export default function DashboardPage() {
                 <div className="stat-label">{c.label}</div>
                 <div className="stat-value" style={{ color: c.color }}>{c.value}</div>
               </div>
-              <c.icon size={32} color={c.color} style={{ opacity: 0.3 }} />
+              <c.icon size={24} color={c.color} style={{ opacity: 0.3, flexShrink: 0 }} />
             </div>
           </div>
         ))}

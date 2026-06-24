@@ -280,10 +280,10 @@ export default function BotSettingsPage() {
         </div>
 
         {/* Save Button */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {saved && <span style={{ color: '#22c55e', fontSize: '0.9rem' }}>Сохранено</span>}
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            <Save size={16} /> {saving ? 'Сохранение...' : 'Сохранить настройки'}
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ width: '100%', justifyContent: 'center', maxWidth: '320px' }}>
+            <Save size={16} /> {saving ? 'Сохранение...' : 'Сохранить'}
           </button>
         </div>
       </div>

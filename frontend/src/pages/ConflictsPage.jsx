@@ -66,49 +66,46 @@ export default function ConflictsPage() {
           </div>
         ) : (
           conflicts.map(c => (
-            <div key={c.id} style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <AlertTriangle size={16} color="#ca8a04" />
-                    <strong>Конфликт #{c.id}</strong>
-                    {c.similarity_score && (
-                      <span className="badge badge-warning">Сходство: {(c.similarity_score * 100).toFixed(0)}%</span>
-                    )}
-                  </div>
-
-                  <div className="grid-2" style={{ gap: '1rem' }}>
-                    <div style={{ padding: '0.75rem', background: '#fef2f2', borderRadius: '0.5rem' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#991b1b', marginBottom: '0.25rem', fontWeight: 600 }}>
-                        Существующее знание
-                      </div>
-                      <p style={{ fontSize: '0.85rem' }}>{c.existing_content || c.old_content || '-'}</p>
-                    </div>
-                    <div style={{ padding: '0.75rem', background: '#f0fdf4', borderRadius: '0.5rem' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#166534', marginBottom: '0.25rem', fontWeight: 600 }}>
-                        Новое знание
-                      </div>
-                      <p style={{ fontSize: '0.85rem' }}>{c.new_content || '-'}</p>
-                    </div>
-                  </div>
-
-                  {c.llm_analysis && (
-                    <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#4b5563', fontStyle: 'italic' }}>
-                      Анализ ИИ: {c.llm_analysis}
-                    </div>
+            <div key={c.id} className="conflict-item">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                  <AlertTriangle size={16} color="#ca8a04" />
+                  <strong>Конфликт #{c.id}</strong>
+                  {c.similarity_score && (
+                    <span className="badge badge-warning">Сходство: {(c.similarity_score * 100).toFixed(0)}%</span>
+                  )}
+                  {filter === 'pending' && (
+                    <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }}
+                      onClick={() => setResolveModal(c)}>
+                      <Check size={14} /> Решить
+                    </button>
+                  )}
+                  {c.resolution && (
+                    <span className="badge badge-success" style={{ marginLeft: 'auto' }}>
+                      {RESOLUTION_OPTIONS.find(o => o.value === c.resolution)?.label || c.resolution}
+                    </span>
                   )}
                 </div>
 
-                {filter === 'pending' && (
-                  <button className="btn btn-primary btn-sm" style={{ marginLeft: '1rem' }}
-                    onClick={() => setResolveModal(c)}>
-                    <Check size={14} /> Решить
-                  </button>
-                )}
-                {c.resolution && (
-                  <span className="badge badge-success" style={{ marginLeft: '1rem' }}>
-                    {RESOLUTION_OPTIONS.find(o => o.value === c.resolution)?.label || c.resolution}
-                  </span>
+                <div className="grid-2" style={{ gap: '0.75rem' }}>
+                  <div style={{ padding: '0.625rem', background: '#fef2f2', borderRadius: '0.5rem' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#991b1b', marginBottom: '0.25rem', fontWeight: 600 }}>
+                      Существующее знание
+                    </div>
+                    <p style={{ fontSize: '0.8rem', wordBreak: 'break-word' }}>{c.existing_content || c.old_content || '-'}</p>
+                  </div>
+                  <div style={{ padding: '0.625rem', background: '#f0fdf4', borderRadius: '0.5rem' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#166534', marginBottom: '0.25rem', fontWeight: 600 }}>
+                      Новое знание
+                    </div>
+                    <p style={{ fontSize: '0.8rem', wordBreak: 'break-word' }}>{c.new_content || '-'}</p>
+                  </div>
+                </div>
+
+                {c.llm_analysis && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#4b5563', fontStyle: 'italic', wordBreak: 'break-word' }}>
+                    Анализ ИИ: {c.llm_analysis}
+                  </div>
                 )}
               </div>
             </div>

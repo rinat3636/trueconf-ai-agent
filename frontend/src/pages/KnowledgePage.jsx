@@ -125,25 +125,25 @@ export default function KnowledgePage() {
 
       <div className="card">
         <div className="card-header">
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <select className="form-control" style={{ width: '220px' }} value={category} onChange={e => setCategory(e.target.value)}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <select className="form-control" style={{ width: 'auto', minWidth: '140px', flex: '1 1 140px', maxWidth: '220px' }} value={category} onChange={e => setCategory(e.target.value)}>
               {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
-            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.5rem' }}>
-              <input className="form-control" style={{ width: '200px' }} value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)} placeholder="Поиск по знаниям..." />
+            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.375rem', flex: '1 1 160px', minWidth: 0 }}>
+              <input className="form-control" style={{ flex: 1, minWidth: 0 }} value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)} placeholder="Поиск..." />
               <button className="btn btn-outline btn-sm" type="submit"><Search size={14} /></button>
             </form>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
             <button className="btn btn-outline btn-sm" onClick={handleReindex} disabled={reindexing}>
               <RefreshCw size={14} /> {reindexing ? 'Индексация...' : 'Переиндексация'}
             </button>
-            <button className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={uploading}>
-              <Upload size={16} /> {uploading ? 'Загрузка...' : 'Загрузить'}
+            <button className="btn btn-primary btn-sm" onClick={() => fileRef.current?.click()} disabled={uploading}>
+              <Upload size={14} /> {uploading ? '...' : 'Загрузить'}
             </button>
-            <button className="btn btn-outline" onClick={() => setShowAddModal(true)}>
-              <Plus size={16} /> Добавить
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAddModal(true)}>
+              <Plus size={14} /> Добавить
             </button>
           </div>
           <input ref={fileRef} type="file" style={{ display: 'none' }} accept=".pdf,.docx,.pptx,.xlsx,.xls,.csv,.txt" onChange={handleUpload} />

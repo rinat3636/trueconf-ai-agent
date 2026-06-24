@@ -993,8 +993,8 @@ tr:hover {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0 0 1rem 0;
-    margin: -0.5rem 0 0.5rem 0;
+    padding: 0 0 0.75rem 0;
+    margin: -0.25rem 0 0.5rem 0;
     border-bottom: 1px solid var(--gray-200);
   }
 
@@ -1026,6 +1026,49 @@ tr:hover {
     padding: 1rem;
   }
 
+  /* Page header */
+  .page-header {
+    margin-bottom: 1rem;
+  }
+
+  .page-header h1 {
+    font-size: 1.15rem;
+  }
+
+  .page-header p {
+    font-size: 0.8rem;
+  }
+
+  /* Cards */
+  .card {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0.625rem;
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  /* Buttons */
+  .btn {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.75rem;
+  }
+
+  .btn-sm {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  /* Forms */
+  .form-control {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.625rem;
+  }
+
   /* Chat page adjustments */
   .chat-page {
     height: calc(100vh - 6rem);
@@ -1034,11 +1077,16 @@ tr:hover {
   .chat-page-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    position: relative;
   }
 
   .chat-page-header h1 {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
+  }
+
+  .chat-page-header p {
+    font-size: 0.75rem;
   }
 
   .chat-new-btn span {
@@ -1047,8 +1095,8 @@ tr:hover {
 
   .chat-new-btn {
     position: absolute;
-    right: 1rem;
-    top: 0.5rem;
+    right: 0;
+    top: 0;
   }
 
   .chat-container {
@@ -1056,41 +1104,42 @@ tr:hover {
   }
 
   .chat-messages {
-    padding: 1rem;
+    padding: 0.75rem;
   }
 
   .chat-msg-bubble {
     max-width: 92%;
     font-size: 0.85rem;
-    padding: 0.625rem 0.875rem;
+    padding: 0.5rem 0.75rem;
   }
 
   .chat-msg-avatar {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border-radius: 8px;
   }
 
   .chat-msg-avatar svg {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
   }
 
   .chat-msg {
-    gap: 0.5rem;
+    gap: 0.375rem;
+    margin-bottom: 0.875rem;
   }
 
   .chat-welcome {
-    padding: 2rem 1rem;
-    min-height: 200px;
+    padding: 1.5rem 1rem;
+    min-height: 180px;
   }
 
   .chat-welcome h2 {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
   }
 
   .chat-welcome > p {
-    font-size: 0.825rem;
+    font-size: 0.8rem;
   }
 
   .chat-suggestions {
@@ -1103,7 +1152,7 @@ tr:hover {
   }
 
   .chat-input-bar {
-    padding: 0.75rem;
+    padding: 0.5rem 0.75rem;
   }
 
   .chat-input-wrapper {
@@ -1115,8 +1164,8 @@ tr:hover {
   }
 
   .chat-send-btn {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
   }
 
   /* Grid adjustments */
@@ -1126,37 +1175,92 @@ tr:hover {
 
   .stats-grid {
     grid-template-columns: 1fr 1fr;
+    gap: 0.625rem;
+  }
+
+  .stat-card {
+    padding: 0.875rem;
+  }
+
+  .stat-card .stat-value {
+    font-size: 1.4rem;
+  }
+
+  .stat-card .stat-label {
+    font-size: 0.7rem;
   }
 
   /* Table scroll on mobile */
+  .table-wrapper {
+    margin: 0 -1rem;
+    padding: 0;
+  }
+
   table {
     display: block;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     white-space: nowrap;
   }
 
-  /* Page header */
-  .page-header h1 {
-    font-size: 1.25rem;
+  th, td {
+    padding: 0.5rem 0.625rem;
+    font-size: 0.8rem;
   }
 
   /* Modal mobile */
   .modal {
     width: 95%;
-    margin: 1rem;
-    max-height: 90vh;
+    margin: 0.5rem;
+    max-height: 92vh;
+    padding: 1.25rem;
+  }
+
+  .modal-title {
+    font-size: 1rem;
+  }
+
+  .modal-actions {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+    min-width: 100px;
+    justify-content: center;
   }
 
   /* Login card mobile */
   .login-card {
-    margin: 1rem;
-    padding: 2rem 1.5rem;
+    margin: 0.75rem;
+    padding: 1.75rem 1.25rem;
+  }
+
+  .login-card h1 {
+    font-size: 1.25rem;
+  }
+
+  /* Empty state */
+  .empty-state {
+    padding: 2rem 1rem;
+  }
+
+  /* Badges */
+  .badge {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.5rem;
   }
 }
 
 @media (max-width: 480px) {
   .main-content {
+    padding: 0.625rem;
+  }
+
+  .card {
     padding: 0.75rem;
+    margin-bottom: 0.75rem;
   }
 
   .chat-page {
@@ -1164,7 +1268,16 @@ tr:hover {
   }
 
   .stats-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .stat-card {
+    padding: 0.625rem;
+  }
+
+  .stat-card .stat-value {
+    font-size: 1.2rem;
   }
 
   .chat-welcome-icon {
@@ -1187,6 +1300,130 @@ tr:hover {
   .chat-page-avatar svg {
     width: 16px;
     height: 16px;
+  }
+
+  .page-header h1 {
+    font-size: 1rem;
+  }
+
+  .page-header p {
+    font-size: 0.75rem;
+  }
+
+  th, td {
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .chat-msg-bubble {
+    max-width: 95%;
+    font-size: 0.8rem;
+  }
+
+  .chat-msg-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+  }
+
+  .chat-msg-avatar svg {
+    width: 11px;
+    height: 11px;
+  }
+}
+
+@media (max-width: 360px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .main-content {
+    padding: 0.5rem;
+  }
+
+  .mobile-header-title {
+    font-size: 0.85rem;
+  }
+}
+
+/* ========================================
+   CHAT VIEWER PAGE
+   ======================================== */
+
+.chat-viewer-layout {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.chat-viewer-sessions {
+  width: 300px;
+  flex-shrink: 0;
+}
+
+.chat-viewer-content {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .chat-viewer-layout {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .chat-viewer-sessions {
+    width: 100%;
+  }
+}
+
+/* ========================================
+   CONFLICT PAGE
+   ======================================== */
+
+.conflict-item {
+  padding: 0.875rem;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+@media (max-width: 768px) {
+  .conflict-item {
+    padding: 0.625rem;
+  }
+}
+
+/* ========================================
+   MODERATION PAGE
+   ======================================== */
+
+.moderation-item {
+  padding: 0.875rem;
+  border-bottom: 1px solid var(--gray-200);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.moderation-actions {
+  display: flex;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .moderation-item {
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.625rem;
+  }
+
+  .moderation-actions {
+    width: 100%;
+  }
+
+  .moderation-actions .btn {
+    flex: 1;
+    justify-content: center;
   }
 }
 

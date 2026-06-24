@@ -72,15 +72,9 @@ export default function ModerationPage() {
           </div>
         ) : (
           items.map(item => (
-            <div key={item.id} style={{
-              padding: '1rem',
-              borderBottom: '1px solid #e5e7eb',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'start',
-            }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.25rem' }}>
+            <div key={item.id} className="moderation-item">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                   <span className={`badge badge-${
                     item.item_type === 'new_knowledge' ? 'info' :
                     item.item_type === 'bad_feedback' ? 'danger' :
@@ -88,9 +82,9 @@ export default function ModerationPage() {
                   }`}>
                     {TYPE_LABELS[item.item_type] || item.item_type}
                   </span>
-                  <strong>{item.title || `#${item.id}`}</strong>
+                  <strong style={{ fontSize: '0.9rem' }}>{item.title || `#${item.id}`}</strong>
                 </div>
-                <p style={{ fontSize: '0.85rem', color: '#4b5563', whiteSpace: 'pre-wrap' }}>
+                <p style={{ fontSize: '0.85rem', color: '#4b5563', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {(item.content || '').substring(0, 300)}{(item.content || '').length > 300 ? '...' : ''}
                 </p>
                 {item.payload && (
@@ -101,7 +95,7 @@ export default function ModerationPage() {
                 )}
               </div>
               {filter === 'pending' && (
-                <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+                <div className="moderation-actions">
                   <button className="btn btn-success btn-sm" onClick={() => handleAction(item.id, 'approve')}>
                     <Check size={14} /> Одобрить
                   </button>
