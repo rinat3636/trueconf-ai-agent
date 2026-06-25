@@ -187,6 +187,8 @@ class ConflictResponse(BaseModel):
     similarity_score: Optional[float]
     new_content_preview: Optional[str]
     existing_content_preview: Optional[str]
+    new_title: Optional[str] = None
+    existing_title: Optional[str] = None
     resolution: str
     notes: Optional[str]
     created_at: datetime

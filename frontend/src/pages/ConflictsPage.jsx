@@ -8,6 +8,12 @@ const RESOLUTION_OPTIONS = [
   { value: 'merge', label: 'Объединить' },
 ]
 
+const CONFLICT_TYPE_LABELS = {
+  contradiction: 'Противоречие',
+  duplicate: 'Дубликат',
+  partial_overlap: 'Частичное пересечение',
+}
+
 export default function ConflictsPage() {
   const [conflicts, setConflicts] = useState([])
   const [filter, setFilter] = useState('pending')
@@ -33,6 +39,15 @@ export default function ConflictsPage() {
       setResolveModal(null)
       setResolution('replace_old')
       setComment('')
+      loadConflicts()
+    } catch (err) { alert('Ошибка: ' + err.message) }
+  }
+
+  const quickResolve = async (c, res) => {
+    const label = RESOLUTION_OPTIONS.find(o => o.value === res)?.label || res
+    if (!window.confirm(`Конфликт #${c.id}: «${label}»?`)) return
+    try {
+      await api.resolveConflict(c.id, { resolution: res, comment: '' })
       loadConflicts()
     } catch (err) { alert('Ошибка: ' + err.message) }
   }
@@ -71,14 +86,24 @@ export default function ConflictsPage() {
                 <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                   <AlertTriangle size={16} color="#ca8a04" />
                   <strong>Конфликт #{c.id}</strong>
-                  {c.similarity_score && (
+                  {c.conflict_type && (
+                    <span className="badge badge-warning">{CONFLICT_TYPE_LABELS[c.conflict_type] || c.conflict_type}</span>
+                  )}
+                  {c.similarity_score != null && (
                     <span className="badge badge-warning">Сходство: {(c.similarity_score * 100).toFixed(0)}%</span>
                   )}
                   {filter === 'pending' && (
-                    <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }}
-                      onClick={() => setResolveModal(c)}>
-                      <Check size={14} /> Решить
-                    </button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => quickResolve(c, 'keep_old')}>
+                        Оставить старое
+                      </button>
+                      <button className="btn btn-outline btn-sm" onClick={() => quickResolve(c, 'replace_old')}>
+                        Заменить старое
+                      </button>
+                      <button className="btn btn-primary btn-sm" onClick={() => setResolveModal(c)}>
+                        <Check size={14} /> Решить
+                      </button>
+                    </div>
                   )}
                   {c.resolution && (
                     <span className="badge badge-success" style={{ marginLeft: 'auto' }}>
@@ -90,15 +115,15 @@ export default function ConflictsPage() {
                 <div className="grid-2" style={{ gap: '0.75rem' }}>
                   <div style={{ padding: '0.625rem', background: '#fef2f2', borderRadius: '0.5rem' }}>
                     <div style={{ fontSize: '0.7rem', color: '#991b1b', marginBottom: '0.25rem', fontWeight: 600 }}>
-                      Существующее знание
+                      Существующее знание{c.existing_title ? `: ${c.existing_title}` : ''}
                     </div>
-                    <p style={{ fontSize: '0.8rem', wordBreak: 'break-word' }}>{c.existing_content || c.old_content || '-'}</p>
+                    <p style={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.existing_content_preview || '—'}</p>
                   </div>
                   <div style={{ padding: '0.625rem', background: '#f0fdf4', borderRadius: '0.5rem' }}>
                     <div style={{ fontSize: '0.7rem', color: '#166534', marginBottom: '0.25rem', fontWeight: 600 }}>
-                      Новое знание
+                      Новое знание{c.new_title ? `: ${c.new_title}` : ''}
                     </div>
-                    <p style={{ fontSize: '0.8rem', wordBreak: 'break-word' }}>{c.new_content || '-'}</p>
+                    <p style={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.new_content_preview || '—'}</p>
                   </div>
                 </div>
 

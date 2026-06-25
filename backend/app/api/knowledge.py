@@ -724,6 +724,22 @@ async def reject_moderation(
 
 # --- Knowledge Conflicts ---
 
+async def _build_conflict_response(db: AsyncSession, conflict: KnowledgeConflict) -> ConflictResponse:
+    """Enrich a conflict with item titles and fall back to item content
+    for legacy rows where the preview columns were never populated."""
+    new_item = await db.get(KnowledgeItem, conflict.new_item_id)
+    existing_item = await db.get(KnowledgeItem, conflict.existing_item_id)
+
+    response = ConflictResponse.model_validate(conflict)
+    response.new_title = new_item.title if new_item else None
+    response.existing_title = existing_item.title if existing_item else None
+    if not response.new_content_preview and new_item:
+        response.new_content_preview = (new_item.content or "")[:500]
+    if not response.existing_content_preview and existing_item:
+        response.existing_content_preview = (existing_item.content or "")[:500]
+    return response
+
+
 @router.get("/conflicts", response_model=list[ConflictResponse])
 async def list_conflicts(
     resolution: Optional[str] = "pending",
@@ -734,7 +750,8 @@ async def list_conflicts(
     if resolution:
         query = query.where(KnowledgeConflict.resolution == resolution)
     result = await db.execute(query)
-    return [ConflictResponse.model_validate(c) for c in result.scalars().all()]
+    conflicts = result.scalars().all()
+    return [await _build_conflict_response(db, c) for c in conflicts]
 
 
 @router.get("/conflicts/{conflict_id}", response_model=ConflictResponse)
@@ -747,7 +764,7 @@ async def get_conflict(
     conflict = result.scalar_one_or_none()
     if not conflict:
         raise HTTPException(status_code=404, detail="Conflict not found")
-    return ConflictResponse.model_validate(conflict)
+    return await _build_conflict_response(db, conflict)
 
 
 @router.post("/conflicts/{conflict_id}/resolve")
