@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+import logging
 from typing import List, Tuple, Optional
 
 import pandas as pd
@@ -8,6 +9,8 @@ from docx import Document as DocxDocument
 from PyPDF2 import PdfReader
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
