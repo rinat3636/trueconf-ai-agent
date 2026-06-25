@@ -17,6 +17,34 @@ logger = logging.getLogger(__name__)
 # Text extraction
 # ---------------------------------------------------------------------------
 
+def _readable_letter_ratio(text: str) -> float:
+    """Share of recognizable letters (Cyrillic/Latin) among non-space chars.
+
+    A text-layer PDF with a broken font encoding extracts as boxes (■) or
+    replacement chars (\ufffd) — such text has almost no real letters and
+    must be re-read via OCR instead of indexed as garbage."""
+    stripped = [c for c in text if not c.isspace()]
+    if not stripped:
+        return 0.0
+    letters = sum(
+        1 for c in stripped
+        if ("\u0400" <= c <= "\u04ff") or c.isascii() and c.isalpha()
+    )
+    return letters / len(stripped)
+
+
+def _ocr_pdf(file_path: str) -> str:
+    from pdf2image import convert_from_path
+    import pytesseract
+    images = convert_from_path(file_path, dpi=200)
+    ocr_texts = []
+    for img in images:
+        ocr_text = pytesseract.image_to_string(img, lang='rus+eng')
+        if ocr_text.strip():
+            ocr_texts.append(ocr_text)
+    return "\n\n".join(ocr_texts)
+
+
 def extract_text_from_pdf(file_path: str) -> str:
     reader = PdfReader(file_path)
     texts = []
@@ -25,22 +53,26 @@ def extract_text_from_pdf(file_path: str) -> str:
         if text:
             texts.append(text)
     result = "\n\n".join(texts)
-    if result.strip():
+    # Run OCR when there is no text layer at all, or when the extracted text
+    # looks broken (e.g. mangled Cyrillic from a bad font encoding).
+    needs_ocr = (not result.strip()) or (
+        len(result.strip()) >= 20 and _readable_letter_ratio(result) < 0.5
+    )
+    if not needs_ocr:
         return result
-    # Fallback: OCR for scanned PDFs
     try:
-        from pdf2image import convert_from_path
-        import pytesseract
-        images = convert_from_path(file_path, dpi=200)
-        ocr_texts = []
-        for img in images:
-            ocr_text = pytesseract.image_to_string(img, lang='rus+eng')
-            if ocr_text.strip():
-                ocr_texts.append(ocr_text)
-        return "\n\n".join(ocr_texts)
+        ocr_result = _ocr_pdf(file_path)
     except Exception as e:
         logger.warning("OCR fallback failed for %s: %s", file_path, e)
         return result
+    # Keep whichever extraction yields more readable letters.
+    if _readable_letter_ratio(ocr_result) >= _readable_letter_ratio(result):
+        if not result.strip():
+            logger.info("Used OCR for scanned PDF %s", file_path)
+        else:
+            logger.info("Used OCR for PDF with broken text layer %s", file_path)
+        return ocr_result
+    return result
 
 
 def extract_text_from_docx(file_path: str) -> str:
