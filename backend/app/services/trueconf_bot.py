@@ -521,8 +521,21 @@ async def start_bot():
                 settings.TRUECONF_BOT_USE_HTTPS,
             )
 
-            # Use library's from_credentials for clean auth
-            trueconf_bot = _create_bot(use_credentials=True)
+            # Acquire the token ourselves on the configured web port, then
+            # connect with it. The library's from_credentials() always requests
+            # the token on HTTPS:443, which fails when the TrueConf server is
+            # reached directly on a non-standard port (e.g. 4443).
+            token = await asyncio.to_thread(
+                _get_token_sync,
+                settings.TRUECONF_SERVER_ADDRESS,
+                settings.TRUECONF_BOT_USERNAME,
+                settings.TRUECONF_BOT_PASSWORD,
+                settings.TRUECONF_BOT_USE_HTTPS,
+                settings.TRUECONF_BOT_WEB_PORT or 0,
+            )
+            if not token:
+                raise RuntimeError("Failed to obtain TrueConf token")
+            trueconf_bot = _create_bot(token=token)
             logger.info("TrueConf bot authenticated, starting WebSocket...")
 
             await trueconf_bot.start()
