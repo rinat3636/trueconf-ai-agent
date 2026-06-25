@@ -59,10 +59,6 @@ export default function LoginPage({ onLogin }) {
             {loading ? 'Вход...' : 'Войти'}
           </button>
         </form>
-
-        <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: '#9ca3af' }}>
-          По умолчанию: admin / admin123
-        </p>
       </div>
     </div>
   )

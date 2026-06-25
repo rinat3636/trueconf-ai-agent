@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Edit2, Save, X } from 'lucide-react'
+import { Plus, Edit2, Save, X, Trash2 } from 'lucide-react'
 import { api } from '../services/api'
 
 const ROLES = [
@@ -86,6 +86,15 @@ export default function UsersPage() {
     } catch (err) { alert('Ошибка: ' + err.message) }
   }
 
+  const handleDelete = async (user) => {
+    if (!window.confirm(`Удалить пользователя «${user.username}»? Его история чатов будет удалена.`)) return
+    try {
+      await api.deleteUser(user.id)
+      setEditingUser(null)
+      loadUsers()
+    } catch (err) { alert('Ошибка: ' + err.message) }
+  }
+
   const handleEdit = (user) => {
     setEditingUser({
       ...user,
@@ -95,13 +104,16 @@ export default function UsersPage() {
 
   const handleSaveEdit = async () => {
     try {
-      await api.updateUser(editingUser.id, {
+      const payload = {
         full_name: editingUser.full_name,
         email: editingUser.email,
         role: editingUser.role,
         is_active: editingUser.is_active,
         permissions: editingUser.permissions,
-      })
+      }
+      if (editingUser.username && editingUser.username.trim()) payload.username = editingUser.username.trim()
+      if (editingUser.newPassword && editingUser.newPassword.trim()) payload.password = editingUser.newPassword.trim()
+      await api.updateUser(editingUser.id, payload)
       setEditingUser(null)
       loadUsers()
     } catch (err) { alert('Ошибка: ' + err.message) }
@@ -229,6 +241,14 @@ export default function UsersPage() {
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 550 }}>
             <h3 className="modal-title">Редактировать: {editingUser.username}</h3>
             <div className="form-group">
+              <label>Логин</label>
+              <input className="form-control" value={editingUser.username || ''} onChange={e => setEditingUser({ ...editingUser, username: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Новый пароль (оставьте пустым, чтобы не менять)</label>
+              <input className="form-control" type="password" autoComplete="new-password" placeholder="••••••••" value={editingUser.newPassword || ''} onChange={e => setEditingUser({ ...editingUser, newPassword: e.target.value })} />
+            </div>
+            <div className="form-group">
               <label>ФИО</label>
               <input className="form-control" value={editingUser.full_name || ''} onChange={e => setEditingUser({ ...editingUser, full_name: e.target.value })} />
             </div>
@@ -253,9 +273,12 @@ export default function UsersPage() {
               </label>
             </div>
             {renderPermissionsBlock()}
-            <div className="modal-actions">
-              <button className="btn btn-outline" onClick={() => setEditingUser(null)}><X size={14} /> Отмена</button>
-              <button className="btn btn-primary" onClick={handleSaveEdit}><Save size={14} /> Сохранить</button>
+            <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+              <button className="btn btn-danger" onClick={() => handleDelete(editingUser)}><Trash2 size={14} /> Удалить</button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn btn-outline" onClick={() => setEditingUser(null)}><X size={14} /> Отмена</button>
+                <button className="btn btn-primary" onClick={handleSaveEdit}><Save size={14} /> Сохранить</button>
+              </div>
             </div>
           </div>
         </div>
