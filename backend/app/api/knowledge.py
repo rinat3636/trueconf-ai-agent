@@ -439,6 +439,8 @@ async def create_rule(
         db, "create_rule", user_id=current_user.id,
         entity_type="corporate_rule", entity_id=corporate_rule.id,
     )
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
     return CorporateRuleResponse.model_validate(corporate_rule)
 
 
@@ -464,6 +466,8 @@ async def update_rule(
         db, "update_rule", user_id=current_user.id,
         entity_type="corporate_rule", entity_id=rule_id,
     )
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
     return CorporateRuleResponse.model_validate(existing)
 
 
@@ -482,6 +486,8 @@ async def delete_rule(
         db, "delete_rule", user_id=current_user.id,
         entity_type="corporate_rule", entity_id=rule_id,
     )
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
     return {"status": "deleted"}
 
 
@@ -496,6 +502,8 @@ async def toggle_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     rule.is_active = not rule.is_active
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
     return {"status": "ok", "is_active": rule.is_active}
 
 
@@ -561,6 +569,8 @@ async def create_correction(
         entity_type="answer_correction", entity_id=answer_correction.id,
         new_value={"correction_type": correction.correction_type},
     )
+    from app.core.redis import delete_cached
+    await delete_cached("chat:*")
     return AnswerCorrectionResponse.model_validate(answer_correction)
 
 

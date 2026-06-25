@@ -98,7 +98,7 @@ class CorporateRuleResponse(BaseModel):
 class AnswerCorrectionCreate(BaseModel):
     message_id: Optional[int] = None
     original_question: str
-    original_answer: str
+    original_answer: str = ""
     corrected_answer: str
     correction_type: str = "answer_fix"  # answer_fix, new_knowledge, new_rule, knowledge_update
     notes: Optional[str] = None

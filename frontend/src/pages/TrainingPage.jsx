@@ -27,7 +27,7 @@ export default function TrainingPage() {
   const [newRule, setNewRule] = useState({ rule_type: 'terminology', title: '', content: '', priority: 50 })
   const [newCorrection, setNewCorrection] = useState({
     original_question: '', original_answer: '', corrected_answer: '',
-    correction_type: 'answer_fix', admin_comment: '',
+    correction_type: 'answer_fix', notes: '',
   })
 
   useEffect(() => { loadData() }, [])
@@ -73,7 +73,7 @@ export default function TrainingPage() {
       setShowCorrectionModal(false)
       setNewCorrection({
         original_question: '', original_answer: '', corrected_answer: '',
-        correction_type: 'answer_fix', admin_comment: '',
+        correction_type: 'answer_fix', notes: '',
       })
       loadData()
     } catch (err) { alert('Ошибка: ' + err.message) }
@@ -236,7 +236,7 @@ export default function TrainingPage() {
                 onChange={e => setNewCorrection({ ...newCorrection, original_question: e.target.value })} />
             </div>
             <div className="form-group">
-              <label>Неправильный ответ</label>
+              <label>Неправильный ответ (необязательно)</label>
               <textarea className="form-control" value={newCorrection.original_answer}
                 onChange={e => setNewCorrection({ ...newCorrection, original_answer: e.target.value })} />
             </div>
@@ -247,8 +247,8 @@ export default function TrainingPage() {
             </div>
             <div className="form-group">
               <label>Комментарий администратора</label>
-              <input className="form-control" value={newCorrection.admin_comment}
-                onChange={e => setNewCorrection({ ...newCorrection, admin_comment: e.target.value })} />
+              <input className="form-control" value={newCorrection.notes}
+                onChange={e => setNewCorrection({ ...newCorrection, notes: e.target.value })} />
             </div>
             <div className="modal-actions">
               <button className="btn btn-outline" onClick={() => setShowCorrectionModal(false)}>Отмена</button>
