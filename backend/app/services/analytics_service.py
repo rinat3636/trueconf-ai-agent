@@ -19,6 +19,22 @@ from app.core.llm import chat_completion
 from app.models.analytics import SalesRecord, SalesReport
 
 
+def _normalize_name(name: Optional[str]) -> str:
+    """Key for grouping: case-insensitive, whitespace-collapsed.
+
+    Merges duplicates like 'Пломбир ' / 'пломбир' / 'Пломбир  ваниль'."""
+    if not name:
+        return "unknown"
+    return " ".join(name.split()).casefold()
+
+
+def _display_name(name: Optional[str]) -> str:
+    """Human-readable name with collapsed whitespace, original case kept."""
+    if not name:
+        return "Unknown"
+    return " ".join(name.split())
+
+
 async def get_sales_analytics(db: AsyncSession, report_id: int) -> Dict[str, Any]:
     result = await db.execute(
         select(SalesRecord).where(SalesRecord.report_id == report_id)
@@ -44,7 +60,17 @@ async def get_sales_analytics(db: AsyncSession, report_id: int) -> Dict[str, Any
     top_clients = sorted(client_records, key=lambda r: r.gross_profit or 0, reverse=True)[:10]
     declining_clients = sorted(client_records, key=lambda r: r.margin_pct or 0)[:5]
 
-    top_products = sorted(product_records, key=lambda r: r.gross_profit or 0, reverse=True)[:10]
+    # Aggregate product rows by SKU (same SKU may appear under many clients) so a
+    # product isn't listed multiple times; margin is revenue-weighted.
+    prod_agg: Dict[str, Dict[str, Any]] = {}
+    for p in product_records:
+        key = _normalize_name(p.name)
+        a = prod_agg.setdefault(key, {"name": _display_name(p.name), "revenue": 0.0, "profit": 0.0})
+        a["revenue"] += p.revenue or 0
+        a["profit"] += p.gross_profit or 0
+    for a in prod_agg.values():
+        a["margin"] = round(a["profit"] / a["revenue"] * 100, 2) if a["revenue"] > 0 else 0
+    top_products = sorted(prod_agg.values(), key=lambda a: a["profit"], reverse=True)[:10]
 
     return {
         "total_revenue": total_revenue,
@@ -52,7 +78,7 @@ async def get_sales_analytics(db: AsyncSession, report_id: int) -> Dict[str, Any
         "avg_margin": round(avg_margin, 2),
         "manager_count": len(rep_records),
         "client_count": len(client_records),
-        "product_count": len(product_records),
+        "product_count": len(prod_agg),
         "top_managers": [
             {
                 "name": m.name,
@@ -91,10 +117,10 @@ async def get_sales_analytics(db: AsyncSession, report_id: int) -> Dict[str, Any
         ],
         "top_products": [
             {
-                "name": p.name,
-                "revenue": p.revenue,
-                "profit": p.gross_profit,
-                "margin": p.margin_pct,
+                "name": p["name"],
+                "revenue": p["revenue"],
+                "profit": p["profit"],
+                "margin": p["margin"],
             }
             for p in top_products
         ],
@@ -217,35 +243,34 @@ async def get_product_analysis(db: AsyncSession, report_id: int) -> Dict[str, An
 
     product_agg: Dict[str, Dict[str, Any]] = {}
     for p in products:
-        name = p.name or "Unknown"
-        if name not in product_agg:
-            product_agg[name] = {
-                "name": name,
+        key = _normalize_name(p.name)
+        if key not in product_agg:
+            product_agg[key] = {
+                "name": _display_name(p.name),
                 "total_revenue": 0,
                 "total_profit": 0,
                 "total_quantity": 0,
                 "total_tonnage": 0,
                 "tp_count": 0,
                 "client_count": 0,
-                "margins": [],
             }
-        agg = product_agg[name]
+        agg = product_agg[key]
         agg["total_revenue"] += p.revenue or 0
         agg["total_profit"] += p.gross_profit or 0
         agg["total_quantity"] += p.quantity or 0
         agg["total_tonnage"] += p.tonnage or 0
         agg["client_count"] += 1
-        if p.margin_pct is not None:
-            agg["margins"].append(p.margin_pct)
 
     product_list = []
     total_revenue = sum(a["total_revenue"] for a in product_agg.values())
 
-    for name, agg in product_agg.items():
-        avg_margin = sum(agg["margins"]) / len(agg["margins"]) if agg["margins"] else 0
+    for agg in product_agg.values():
+        # Revenue-weighted margin (profit / revenue), not a plain average of
+        # per-line percentages, so large and small lines are weighted correctly.
+        avg_margin = (agg["total_profit"] / agg["total_revenue"] * 100) if agg["total_revenue"] > 0 else 0
         revenue_share = (agg["total_revenue"] / total_revenue * 100) if total_revenue > 0 else 0
         product_list.append({
-            "name": name,
+            "name": agg["name"],
             "total_revenue": round(agg["total_revenue"], 2),
             "total_profit": round(agg["total_profit"], 2),
             "total_quantity": round(agg["total_quantity"], 2),
@@ -429,6 +454,9 @@ async def generate_ai_recommendations(analytics: Dict[str, Any]) -> List[str]:
                     "- Слабую клиентскую базу (мало SKU у клиента)\n"
                     "- Снижение продаж\n"
                     "Рекомендации должны быть практичными и адресными.\n"
+                    "ВАЖНО: используй только числа из предоставленных данных. "
+                    "Не выдумывай и не пересчитывай суммы, проценты и имена. "
+                    "Если данных для вывода не хватает — прямо скажи об этом.\n"
                     "Отвечай на русском языке."
                 ),
             },
@@ -441,7 +469,7 @@ async def generate_ai_recommendations(analytics: Dict[str, Any]) -> List[str]:
             },
         ],
         max_tokens=2000,
-        temperature=0.4,
+        temperature=0,
     )
 
     recommendations = []
@@ -499,6 +527,9 @@ async def generate_full_ai_analysis(db: AsyncSession, report_id: int) -> Dict[st
                         "4. Анализ ассортимента\n"
                         "5. Риски и проблемы\n"
                         "6. Управленческие рекомендации\n"
+                        "ВАЖНО: оперируй только числами из предоставленных данных; "
+                        "не выдумывай и не пересчитывай суммы/проценты/имена. "
+                        "Если каких-то данных нет — так и напиши.\n"
                         "Отвечай на русском, конкретно и с цифрами."
                     ),
                 },
@@ -508,7 +539,7 @@ async def generate_full_ai_analysis(db: AsyncSession, report_id: int) -> Dict[st
                 },
             ],
             max_tokens=4000,
-            temperature=0.3,
+            temperature=0,
         )
     except Exception as e:
         logger.error("Failed to generate detailed analysis: %s", e)
@@ -544,8 +575,9 @@ async def answer_analytics_question(
                     'Ты — ИИ-аналитик продаж компании ТД "Мир Мороженого" '
                     "(дистрибьютор мороженого, Владимирская область).\n"
                     "Отвечай на вопросы на основании предоставленных данных.\n"
-                    "Будь точен и конкретен. Приводи цифры. Отвечай на русском языке.\n"
-                    "Если данных недостаточно — укажи это."
+                    "Будь точен и конкретен. Приводи цифры строго из данных.\n"
+                    "Не выдумывай и не пересчитывай числа; если данных недостаточно — укажи это.\n"
+                    "Отвечай на русском языке."
                 ),
             },
             {
@@ -554,6 +586,7 @@ async def answer_analytics_question(
             },
         ],
         max_tokens=2000,
+        temperature=0,
     )
 
 
@@ -572,7 +605,7 @@ def _format_analytics_for_ai(analytics: Dict[str, Any]) -> str:
 
     if analytics.get("top_managers"):
         lines.append("\nТОП менеджеров по прибыли:")
-        for m in analytics["top_managers"][:5]:
+        for m in analytics["top_managers"][:10]:
             lines.append(
                 f"  {m['name']}: выручка {_safe_num(m.get('revenue')):,.0f}, "
                 f"прибыль {_safe_num(m.get('profit')):,.0f}, маржа {_safe_num(m.get('margin')):.1f}%"
@@ -588,7 +621,7 @@ def _format_analytics_for_ai(analytics: Dict[str, Any]) -> str:
 
     if analytics.get("top_clients"):
         lines.append("\nТОП клиентов по прибыли:")
-        for c in analytics["top_clients"][:5]:
+        for c in analytics["top_clients"][:10]:
             lines.append(
                 f"  {c['name']}: "
                 f"прибыль {_safe_num(c.get('profit')):,.0f}, маржа {_safe_num(c.get('margin')):.1f}%"
@@ -600,6 +633,14 @@ def _format_analytics_for_ai(analytics: Dict[str, Any]) -> str:
             lines.append(
                 f"  {c['name']}: маржа {_safe_num(c.get('margin')):.1f}%, "
                 f"прибыль {_safe_num(c.get('profit')):,.0f}"
+            )
+
+    if analytics.get("top_products"):
+        lines.append("\nТОП товаров по прибыли:")
+        for p in analytics["top_products"][:10]:
+            lines.append(
+                f"  {p['name']}: выручка {_safe_num(p.get('revenue')):,.0f}, "
+                f"прибыль {_safe_num(p.get('profit')):,.0f}, маржа {_safe_num(p.get('margin')):.1f}%"
             )
 
     return "\n".join(lines)
