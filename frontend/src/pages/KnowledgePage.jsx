@@ -16,6 +16,13 @@ const CATEGORIES = [
   { value: 'other', label: 'Прочее' },
 ]
 
+const ITEM_STATUS = {
+  approved: { label: 'Одобрена', cls: 'success' },
+  pending: { label: 'Ожидает', cls: 'warning' },
+  rejected: { label: 'Отклонена', cls: 'danger' },
+  archived: { label: 'Архив', cls: 'info' },
+}
+
 export default function KnowledgePage() {
   const [documents, setDocuments] = useState([])
   const [knowledgeItems, setKnowledgeItems] = useState([])
@@ -203,14 +210,14 @@ export default function KnowledgePage() {
           <div className="table-wrapper">
             <table>
               <thead>
-                <tr><th>Название</th><th>Категория</th><th>Одобрена</th><th>Версия</th><th>Дата</th><th></th></tr>
+                <tr><th>Название</th><th>Категория</th><th>Статус</th><th>Версия</th><th>Дата</th><th></th></tr>
               </thead>
               <tbody>
                 {knowledgeItems.map(item => (
                   <tr key={item.id}>
                     <td>{item.title}</td>
                     <td>{CATEGORIES.find(c => c.value === item.category)?.label || item.category || '-'}</td>
-                    <td><span className={`badge badge-${item.status === 'approved' ? 'success' : 'warning'}`}>{item.status === 'approved' ? 'Одобрена' : 'Ожидает'}</span></td>
+                    <td><span className={`badge badge-${(ITEM_STATUS[item.status] || ITEM_STATUS.pending).cls}`}>{(ITEM_STATUS[item.status] || { label: item.status }).label}</span></td>
                     <td>v{item.version || 1}</td>
                     <td>{new Date(item.created_at).toLocaleDateString('ru-RU')}</td>
                     <td style={{ display: 'flex', gap: '0.25rem' }}>
