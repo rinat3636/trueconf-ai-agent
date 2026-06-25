@@ -379,7 +379,7 @@ def _create_bot(token: str = None, use_credentials: bool = False):
     dp = Dispatcher()
     dp.include_router(router)
 
-    BOT_PREFIX = "aibot"
+    BOT_PREFIX = "старт"
 
     @router.message(F.text)
     async def on_text_message(message: Message):
@@ -392,14 +392,14 @@ def _create_bot(token: str = None, use_credentials: bool = False):
 
         stripped = text.strip()
 
-        # In group chats: only respond if message starts with "aibot"
+        # In group chats: only respond if message starts with "старт"
         # In P2P chats: respond to everything
         is_p2p = chat_id.startswith("chat_p2p_")
         if not is_p2p:
             lower = stripped.lower()
             if not lower.startswith(BOT_PREFIX):
                 return
-            # Strip the "aibot" prefix and any following whitespace/punctuation
+            # Strip the "старт" prefix and any following whitespace/punctuation
             stripped = stripped[len(BOT_PREFIX):].lstrip(" ,:")
             if not stripped:
                 stripped = "Привет"
@@ -521,8 +521,19 @@ async def start_bot():
                 settings.TRUECONF_BOT_USE_HTTPS,
             )
 
-            # Use library's from_credentials for clean auth
-            trueconf_bot = _create_bot(use_credentials=True)
+            # Acquire OAuth token on the configured web port (e.g. 4443).
+            # The library's from_credentials always hits port 443, which the
+            # TrueConf Bridge rejects with 403, so fetch the token ourselves.
+            token = _get_token_sync(
+                server=settings.TRUECONF_SERVER_ADDRESS,
+                username=settings.TRUECONF_BOT_USERNAME,
+                password=settings.TRUECONF_BOT_PASSWORD,
+                use_https=settings.TRUECONF_BOT_USE_HTTPS,
+                port=settings.TRUECONF_BOT_WEB_PORT or 0,
+            )
+            if not token:
+                raise RuntimeError("Failed to obtain TrueConf auth token")
+            trueconf_bot = _create_bot(token=token, use_credentials=False)
             logger.info("TrueConf bot authenticated, starting WebSocket...")
 
             await trueconf_bot.start()

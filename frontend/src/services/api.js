@@ -136,6 +136,7 @@ export const api = {
 
   // Users
   updateUser: (id, data) => request(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
 
   // Monitoring
   getStats: () => request('/monitoring/stats'),

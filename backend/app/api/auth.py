@@ -154,6 +154,15 @@ async def update_user(
 
     old_value = {"role": user.role, "is_active": user.is_active}
 
+    if data.username is not None and data.username != user.username:
+        exists = await db.execute(
+            select(User).where(User.username == data.username, User.id != user_id)
+        )
+        if exists.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Username already exists")
+        user.username = data.username
+    if data.password:
+        user.hashed_password = get_password_hash(data.password)
     if data.email is not None:
         user.email = data.email
     if data.full_name is not None:
@@ -172,3 +181,69 @@ async def update_user(
         new_value={"role": user.role, "is_active": user.is_active},
     )
     return UserResponse.model_validate(user)
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Нельзя удалить собственную учётную запись")
+
+    if user.role == "super_admin":
+        from sqlalchemy import func
+        count = await db.execute(
+            select(func.count()).select_from(User).where(User.role == "super_admin")
+        )
+        if (count.scalar() or 0) <= 1:
+            raise HTTPException(status_code=400, detail="Нельзя удалить последнего суперадмина")
+
+    await log_action(
+        db, "delete_user", user_id=current_user.id,
+        entity_type="user", entity_id=user.id,
+        old_value={"username": user.username, "role": user.role},
+    )
+
+    from sqlalchemy import text
+    # Reassign content ownership to the acting admin so non-nullable FKs stay valid
+    reassign = [
+        ("documents", "uploaded_by"),
+        ("sales_reports", "uploaded_by"),
+        ("knowledge_items", "approved_by"),
+        ("knowledge_item_versions", "changed_by"),
+        ("corporate_rules", "created_by"),
+        ("answer_corrections", "created_by"),
+        ("knowledge_conflicts", "resolved_by"),
+        ("moderation_queue", "created_by"),
+        ("moderation_queue", "reviewed_by"),
+        ("system_settings", "updated_by"),
+    ]
+    for table, col in reassign:
+        await db.execute(
+            text(f"UPDATE {table} SET {col} = :new_id WHERE {col} = :old_id"),
+            {"new_id": current_user.id, "old_id": user.id},
+        )
+    # Detach audit history (nullable) and remove the user's own chat sessions
+    await db.execute(
+        text("UPDATE audit_log SET user_id = NULL WHERE user_id = :old_id"),
+        {"old_id": user.id},
+    )
+    await db.execute(
+        text("DELETE FROM chat_messages WHERE session_id IN "
+             "(SELECT id FROM chat_sessions WHERE user_id = :old_id)"),
+        {"old_id": user.id},
+    )
+    await db.execute(
+        text("DELETE FROM chat_sessions WHERE user_id = :old_id"),
+        {"old_id": user.id},
+    )
+
+    await db.delete(user)
+    return {"status": "ok"}
