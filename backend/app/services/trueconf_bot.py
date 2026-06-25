@@ -521,8 +521,19 @@ async def start_bot():
                 settings.TRUECONF_BOT_USE_HTTPS,
             )
 
-            # Use library's from_credentials for clean auth
-            trueconf_bot = _create_bot(use_credentials=True)
+            # Acquire OAuth token on the configured web port (e.g. 4443).
+            # The library's from_credentials always hits port 443, which the
+            # TrueConf Bridge rejects with 403, so fetch the token ourselves.
+            token = _get_token_sync(
+                server=settings.TRUECONF_SERVER_ADDRESS,
+                username=settings.TRUECONF_BOT_USERNAME,
+                password=settings.TRUECONF_BOT_PASSWORD,
+                use_https=settings.TRUECONF_BOT_USE_HTTPS,
+                port=settings.TRUECONF_BOT_WEB_PORT or 0,
+            )
+            if not token:
+                raise RuntimeError("Failed to obtain TrueConf auth token")
+            trueconf_bot = _create_bot(token=token, use_credentials=False)
             logger.info("TrueConf bot authenticated, starting WebSocket...")
 
             await trueconf_bot.start()
