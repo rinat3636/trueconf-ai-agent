@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+import logging
 from typing import List, Tuple, Optional
 
 import pandas as pd
@@ -9,10 +10,40 @@ from PyPDF2 import PdfReader
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Text extraction
 # ---------------------------------------------------------------------------
+
+def _readable_letter_ratio(text: str) -> float:
+    """Share of recognizable letters (Cyrillic/Latin) among non-space chars.
+
+    A text-layer PDF with a broken font encoding extracts as boxes (■) or
+    replacement chars (\ufffd) — such text has almost no real letters and
+    must be re-read via OCR instead of indexed as garbage."""
+    stripped = [c for c in text if not c.isspace()]
+    if not stripped:
+        return 0.0
+    letters = sum(
+        1 for c in stripped
+        if ("\u0400" <= c <= "\u04ff") or c.isascii() and c.isalpha()
+    )
+    return letters / len(stripped)
+
+
+def _ocr_pdf(file_path: str) -> str:
+    from pdf2image import convert_from_path
+    import pytesseract
+    images = convert_from_path(file_path, dpi=200)
+    ocr_texts = []
+    for img in images:
+        ocr_text = pytesseract.image_to_string(img, lang='rus+eng')
+        if ocr_text.strip():
+            ocr_texts.append(ocr_text)
+    return "\n\n".join(ocr_texts)
+
 
 def extract_text_from_pdf(file_path: str) -> str:
     reader = PdfReader(file_path)
@@ -22,22 +53,26 @@ def extract_text_from_pdf(file_path: str) -> str:
         if text:
             texts.append(text)
     result = "\n\n".join(texts)
-    if result.strip():
+    # Run OCR when there is no text layer at all, or when the extracted text
+    # looks broken (e.g. mangled Cyrillic from a bad font encoding).
+    needs_ocr = (not result.strip()) or (
+        len(result.strip()) >= 20 and _readable_letter_ratio(result) < 0.5
+    )
+    if not needs_ocr:
         return result
-    # Fallback: OCR for scanned PDFs
     try:
-        from pdf2image import convert_from_path
-        import pytesseract
-        images = convert_from_path(file_path, dpi=200)
-        ocr_texts = []
-        for img in images:
-            ocr_text = pytesseract.image_to_string(img, lang='rus+eng')
-            if ocr_text.strip():
-                ocr_texts.append(ocr_text)
-        return "\n\n".join(ocr_texts)
+        ocr_result = _ocr_pdf(file_path)
     except Exception as e:
         logger.warning("OCR fallback failed for %s: %s", file_path, e)
         return result
+    # Keep whichever extraction yields more readable letters.
+    if _readable_letter_ratio(ocr_result) >= _readable_letter_ratio(result):
+        if not result.strip():
+            logger.info("Used OCR for scanned PDF %s", file_path)
+        else:
+            logger.info("Used OCR for PDF with broken text layer %s", file_path)
+        return ocr_result
+    return result
 
 
 def extract_text_from_docx(file_path: str) -> str:
@@ -467,9 +502,9 @@ _COLUMN_SYNONYMS = {
     "manager": ["менеджер", "тп", "торговый представитель", "manager", "rep", "сотрудник", "ответственный"],
     "client": ["клиент", "контрагент", "покупатель", "client", "customer", "точка", "организация"],
     "product": ["товар", "продукт", "номенклатура", "product", "sku", "артикул", "наименование товара"],
-    "quantity": ["количество", "кол-во", "кол.", "qty", "quantity", "шт"],
+    "quantity": ["количество", "кол-во", "кол.", "qty", "quantity", "шт", "ед. хранения", "ед.хранения", "ед хранения", "единиц"],
     "tonnage": ["тоннаж", "вес", "масса", "кг", "tonnage", "weight"],
-    "revenue": ["выручка", "стоимость", "сумма", "revenue", "оборот", "продажи", "сумма продаж"],
+    "revenue": ["выручка", "стоимость", "сумма", "revenue", "оборот", "продажи", "сумма продаж", "с ндс", "ндс"],
     "profit": ["прибыль", "валовая прибыль", "доход", "profit", "gross profit", "маржинальный доход"],
     "margin": ["маржа", "маржинальность", "рентабельность", "margin", "%", "наценка"],
 }
@@ -620,6 +655,10 @@ def _parse_flat_table(df) -> Tuple[List[dict], dict]:
     if not mapping:
         return [], metadata
 
+    # Product-only report (e.g. 1C "Номенклатура"): no manager/client columns,
+    # only a product column with its metrics. Emit product-level records directly.
+    product_only = mapping.get("manager") is None and mapping.get("product") is not None
+
     records = []
     managers_seen = {}
     clients_seen = {}
@@ -637,10 +676,18 @@ def _parse_flat_table(df) -> Tuple[List[dict], dict]:
         client_name = str(_get("client")).strip() if _get("client") else None
         product_name = str(_get("product")).strip() if _get("product") else None
 
-        if not manager_name or manager_name in ("nan", "None", ""):
+        if product_only:
+            if not product_name or product_name in ("nan", "None", ""):
+                continue
+        elif not manager_name or manager_name in ("nan", "None", ""):
             continue
 
-        is_total = "итого" in (manager_name or "").lower() or "итого" in (client_name or "").lower()
+        is_total = (
+            "итого" in (manager_name or "").lower()
+            or "итого" in (client_name or "").lower()
+            or "итого" in (product_name or "").lower()
+            or "всего" in (product_name or "").lower()
+        )
         if is_total:
             continue
 
@@ -720,8 +767,11 @@ def _parse_flat_table(df) -> Tuple[List[dict], dict]:
 
     if all_records:
         manager_records = [r for r in all_records if r["record_level"] == "manager"]
-        metadata["total_revenue"] = sum(r["revenue"] or 0 for r in manager_records)
-        metadata["total_profit"] = sum(r["profit"] or 0 for r in manager_records)
+        product_records_all = [r for r in all_records if r["record_level"] == "product"]
+        # For product-only reports totals come from product rows (no manager level).
+        revenue_source = manager_records if manager_records else product_records_all
+        metadata["total_revenue"] = sum(r["revenue"] or 0 for r in revenue_source)
+        metadata["total_profit"] = sum(r["profit"] or 0 for r in revenue_source)
         metadata["total_managers"] = len(manager_records)
         client_records = [r for r in all_records if r["record_level"] == "client"]
         metadata["total_clients"] = len(client_records)
