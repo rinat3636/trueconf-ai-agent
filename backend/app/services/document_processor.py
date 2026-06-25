@@ -470,9 +470,9 @@ _COLUMN_SYNONYMS = {
     "manager": ["менеджер", "тп", "торговый представитель", "manager", "rep", "сотрудник", "ответственный"],
     "client": ["клиент", "контрагент", "покупатель", "client", "customer", "точка", "организация"],
     "product": ["товар", "продукт", "номенклатура", "product", "sku", "артикул", "наименование товара"],
-    "quantity": ["количество", "кол-во", "кол.", "qty", "quantity", "шт"],
+    "quantity": ["количество", "кол-во", "кол.", "qty", "quantity", "шт", "ед. хранения", "ед.хранения", "ед хранения", "единиц"],
     "tonnage": ["тоннаж", "вес", "масса", "кг", "tonnage", "weight"],
-    "revenue": ["выручка", "стоимость", "сумма", "revenue", "оборот", "продажи", "сумма продаж"],
+    "revenue": ["выручка", "стоимость", "сумма", "revenue", "оборот", "продажи", "сумма продаж", "с ндс", "ндс"],
     "profit": ["прибыль", "валовая прибыль", "доход", "profit", "gross profit", "маржинальный доход"],
     "margin": ["маржа", "маржинальность", "рентабельность", "margin", "%", "наценка"],
 }
@@ -623,6 +623,10 @@ def _parse_flat_table(df) -> Tuple[List[dict], dict]:
     if not mapping:
         return [], metadata
 
+    # Product-only report (e.g. 1C "Номенклатура"): no manager/client columns,
+    # only a product column with its metrics. Emit product-level records directly.
+    product_only = mapping.get("manager") is None and mapping.get("product") is not None
+
     records = []
     managers_seen = {}
     clients_seen = {}
@@ -640,10 +644,18 @@ def _parse_flat_table(df) -> Tuple[List[dict], dict]:
         client_name = str(_get("client")).strip() if _get("client") else None
         product_name = str(_get("product")).strip() if _get("product") else None
 
-        if not manager_name or manager_name in ("nan", "None", ""):
+        if product_only:
+            if not product_name or product_name in ("nan", "None", ""):
+                continue
+        elif not manager_name or manager_name in ("nan", "None", ""):
             continue
 
-        is_total = "итого" in (manager_name or "").lower() or "итого" in (client_name or "").lower()
+        is_total = (
+            "итого" in (manager_name or "").lower()
+            or "итого" in (client_name or "").lower()
+            or "итого" in (product_name or "").lower()
+            or "всего" in (product_name or "").lower()
+        )
         if is_total:
             continue
 
@@ -723,8 +735,11 @@ def _parse_flat_table(df) -> Tuple[List[dict], dict]:
 
     if all_records:
         manager_records = [r for r in all_records if r["record_level"] == "manager"]
-        metadata["total_revenue"] = sum(r["revenue"] or 0 for r in manager_records)
-        metadata["total_profit"] = sum(r["profit"] or 0 for r in manager_records)
+        product_records_all = [r for r in all_records if r["record_level"] == "product"]
+        # For product-only reports totals come from product rows (no manager level).
+        revenue_source = manager_records if manager_records else product_records_all
+        metadata["total_revenue"] = sum(r["revenue"] or 0 for r in revenue_source)
+        metadata["total_profit"] = sum(r["profit"] or 0 for r in revenue_source)
         metadata["total_managers"] = len(manager_records)
         client_records = [r for r in all_records if r["record_level"] == "client"]
         metadata["total_clients"] = len(client_records)
