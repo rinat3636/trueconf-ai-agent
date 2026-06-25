@@ -333,11 +333,14 @@ async def run_conflict_detection(
     for item in similar:
         llm_result = await check_conflict_with_llm(new_content, item["content"])
         if llm_result["conflict_type"] != "no_conflict":
+            existing_content = item.get("content", "") or ""
             conflicts.append({
                 "existing_item_id": item["knowledge_id"],
                 "existing_title": item.get("title", ""),
                 "similarity_score": item["score"],
                 "conflict_type": llm_result["conflict_type"],
+                "new_content_preview": (new_content or "")[:500],
+                "existing_content_preview": existing_content[:500],
             })
 
     return conflicts

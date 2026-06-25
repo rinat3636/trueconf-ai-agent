@@ -154,6 +154,10 @@ async def process_document_pipeline(
                         existing_item_id=existing_id,
                         conflict_type=conflict_data["conflict_type"],
                         similarity_score=conflict_data.get("similarity_score", 0.0),
+                        new_content_preview=conflict_data.get("new_content_preview")
+                        or (ki_data.get("content") or "")[:500],
+                        existing_content_preview=conflict_data.get("existing_content_preview")
+                        or (existing_item.content or "")[:500],
                         resolution="pending",
                     )
                     db.add(conflict)
