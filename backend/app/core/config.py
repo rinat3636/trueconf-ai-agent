@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # LLM (aitunnel.ru — unified OpenAI-compatible API)
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "https://api.aitunnel.ru/v1"
-    LLM_CHAT_MODEL: str = "claude-sonnet-4"  # main model for chat
+    LLM_CHAT_MODEL: str = "gpt-4.1-mini"  # main model for chat (cost-optimized)
     LLM_LIGHT_MODEL: str = "gpt-4.1-mini"  # lightweight model for extraction/classification
 
     # TrueConf Chatbot (via python-trueconf-bot / WebSocket API)
