@@ -43,6 +43,15 @@ export default function ConflictsPage() {
     } catch (err) { alert('Ошибка: ' + err.message) }
   }
 
+  const quickResolve = async (c, res) => {
+    const label = RESOLUTION_OPTIONS.find(o => o.value === res)?.label || res
+    if (!window.confirm(`Конфликт #${c.id}: «${label}»?`)) return
+    try {
+      await api.resolveConflict(c.id, { resolution: res, comment: '' })
+      loadConflicts()
+    } catch (err) { alert('Ошибка: ' + err.message) }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -84,10 +93,17 @@ export default function ConflictsPage() {
                     <span className="badge badge-warning">Сходство: {(c.similarity_score * 100).toFixed(0)}%</span>
                   )}
                   {filter === 'pending' && (
-                    <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }}
-                      onClick={() => setResolveModal(c)}>
-                      <Check size={14} /> Решить
-                    </button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => quickResolve(c, 'keep_old')}>
+                        Оставить старое
+                      </button>
+                      <button className="btn btn-outline btn-sm" onClick={() => quickResolve(c, 'replace_old')}>
+                        Заменить старое
+                      </button>
+                      <button className="btn btn-primary btn-sm" onClick={() => setResolveModal(c)}>
+                        <Check size={14} /> Решить
+                      </button>
+                    </div>
                   )}
                   {c.resolution && (
                     <span className="badge badge-success" style={{ marginLeft: 'auto' }}>
