@@ -32,8 +32,10 @@ async def get_sales_analytics(db: AsyncSession, report_id: int) -> Dict[str, Any
     client_records = [r for r in records if r.level == "client"]
     product_records = [r for r in records if r.level == "product"]
 
-    total_revenue = sum(r.revenue or 0 for r in rep_records)
-    total_profit = sum(r.gross_profit or 0 for r in rep_records)
+    # Manager-level totals; for product-only reports (no reps) fall back to products.
+    revenue_source = rep_records if rep_records else product_records
+    total_revenue = sum(r.revenue or 0 for r in revenue_source)
+    total_profit = sum(r.gross_profit or 0 for r in revenue_source)
     avg_margin = (total_profit / total_revenue * 100) if total_revenue > 0 else 0
 
     top_managers = sorted(rep_records, key=lambda r: r.gross_profit or 0, reverse=True)[:10]
